@@ -244,14 +244,6 @@ function renderContractorsTable(people) {
     <span class="badge badge-gray">その他 ${others.length}名</span>
   `;
 
-  // タブバー
-  const tabBar = document.createElement('div');
-  tabBar.className = 'tab-bar';
-  tabBar.innerHTML = `
-    <button class="tab-btn active" data-ctab="tab-c2-contractor"><i class="fas fa-user-check"></i> 業務委託</button>
-    <button class="tab-btn" data-ctab="tab-c2-other"><i class="fas fa-users"></i> その他</button>
-  `;
-
   // テーブル生成ヘルパー
   function buildPeopleTable(rows) {
     const table = buildTable(headers, rows, row => {
@@ -288,43 +280,18 @@ function renderContractorsTable(people) {
     return table;
   }
 
-  // 各タブコンテンツ
-  const tabContractor = document.createElement('div');
-  tabContractor.id = 'tab-c2-contractor';
-  tabContractor.className = 'tab-content active';
-  if (contractors.length === 0) {
-    tabContractor.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">業務委託者がいません</div>';
-  } else {
-    tabContractor.appendChild(buildPeopleTable(contractors));
-  }
-
-  const tabOther = document.createElement('div');
-  tabOther.id = 'tab-c2-other';
-  tabOther.className = 'tab-content';
-  if (others.length === 0) {
-    tabOther.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">その他の方はいません</div>';
-  } else {
-    tabOther.appendChild(buildPeopleTable(others));
-  }
-
+  // タブなし・全員を1枚テーブルで表示
   wrap.innerHTML = '';
   wrap.appendChild(summary);
-  wrap.appendChild(tabBar);
-  wrap.appendChild(tabContractor);
-  wrap.appendChild(tabOther);
+  if (rowData.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:1.5rem;text-align:center;color:var(--gray-400)';
+    empty.textContent = '社員名簿に人員が見つかりません';
+    wrap.appendChild(empty);
+  } else {
+    wrap.appendChild(buildPeopleTable(rowData));
+  }
   show(wrap);
-
-  // タブ切り替えイベント（この要素内のみ）
-  tabBar.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      tabBar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const targetId = btn.dataset.ctab;
-      [tabContractor, tabOther].forEach(el => el.classList.remove('active'));
-      const target = document.getElementById(targetId);
-      if (target) target.classList.add('active');
-    });
-  });
 }
 
 function maskAccountDisplay(num) {
@@ -791,21 +758,11 @@ function setupStep5() {
 }
 
 function runStep5() {
-  // 業務委託プレビュー
-  const { rows: staffRows, total: staffTotal } = buildInvoicePreviewData(AppState.contractors, AppState.periodYm);
-  renderInvoicePreview('invoice-preview-staff', staffRows, staffTotal, false);
-
-  // DRプレビュー
+  // DRファイルがある場合のみDRダウンロードボタンを表示
   if (AppState.drList && AppState.drList.length > 0) {
-    const { rows: drRows, total: drTotal } = buildDRInvoicePreviewData(AppState.drList, AppState.periodYm);
-    renderInvoicePreview('invoice-preview-dr', drRows, drTotal, true);
-    $('tab-output-dr-btn').style.display = '';
     $('btn-step5-dr-download').style.display = '';
   } else {
-    $('tab-output-dr-btn').style.display = 'none';
     $('btn-step5-dr-download').style.display = 'none';
-    $('invoice-preview-dr').innerHTML = '<div style="padding:1rem;color:var(--gray-400)">DRファイルが未アップロードのため出力できません。</div>';
-    show($('invoice-preview-dr'));
   }
 }
 

@@ -165,7 +165,7 @@
       <!-- ステップ2: 委託者情報取得 -->
       <section id="step-2" class="step-section">
         <h2 class="step-title"><i class="fas fa-users"></i> 委託者情報取得</h2>
-        <p class="step-desc">業務報告書から全員の情報を抽出します。「業務委託」タブと「その他」タブに分けて表示します。</p>
+        <p class="step-desc">業務報告書から全員の情報を抽出します。</p>
 
         <div class="step-actions">
           <button id="btn-step2-back" class="btn btn-outline"><i class="fas fa-arrow-left"></i> 戻る</button>
@@ -280,23 +280,6 @@
           <button id="btn-step5-restart" class="btn btn-outline btn-lg">
             <i class="fas fa-redo"></i> 最初に戻る（STEP1）
           </button>
-        </div>
-
-        <!-- Step5 タブ -->
-        <div class="tab-bar">
-          <button class="tab-btn active" data-tab="tab-output-staff">
-            <i class="fas fa-user"></i> 業務委託
-          </button>
-          <button class="tab-btn" data-tab="tab-output-dr" id="tab-output-dr-btn" style="display:none">
-            <i class="fas fa-car"></i> DR
-          </button>
-        </div>
-
-        <div id="tab-output-staff" class="tab-content active">
-          <div id="invoice-preview-staff" class="data-table-wrap"></div>
-        </div>
-        <div id="tab-output-dr" class="tab-content">
-          <div id="invoice-preview-dr" class="data-table-wrap"></div>
         </div>
 
         <div class="note-box">
