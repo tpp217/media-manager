@@ -148,6 +148,18 @@
             次へ：委託者情報取得 <i class="fas fa-arrow-right"></i>
           </button>
         </div>
+
+        <!-- 保存済みスナップショット一覧 -->
+        <div class="snapshot-panel" id="snapshot-panel">
+          <div class="snapshot-panel-header">
+            <span><i class="fas fa-database"></i> SAVED SNAPSHOTS</span>
+            <span id="snapshot-status" class="snapshot-status"></span>
+          </div>
+          <div id="snapshot-list" class="snapshot-list">
+            <div class="snapshot-empty"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>
+          </div>
+        </div>
+
       </section>
 
       <!-- ステップ2: 委託者情報取得 -->
@@ -295,6 +307,35 @@
 
     </main>
     <div id="toast-container"></div>
+  </div>
+
+  <!-- スナップショット詳細モーダル -->
+  <div id="snapshot-modal" class="snap-modal-overlay" style="display:none">
+    <div class="snap-modal">
+      <div class="snap-modal-header">
+        <div>
+          <div class="snap-modal-title" id="snap-modal-title">─</div>
+          <div class="snap-modal-sub" id="snap-modal-sub">─</div>
+        </div>
+        <button class="snap-modal-close" id="snap-modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="snap-modal-tabs">
+        <button class="snap-tab-btn active" data-snap-tab="snap-tab-people">
+          <i class="fas fa-users"></i> 委託者情報
+        </button>
+        <button class="snap-tab-btn" data-snap-tab="snap-tab-reconcile">
+          <i class="fas fa-balance-scale"></i> 日払い突合
+        </button>
+        <button class="snap-tab-btn" data-snap-tab="snap-tab-diff">
+          <i class="fas fa-history"></i> 前月差分
+        </button>
+      </div>
+      <div class="snap-modal-body">
+        <div id="snap-tab-people"  class="snap-tab-content active"></div>
+        <div id="snap-tab-reconcile" class="snap-tab-content"></div>
+        <div id="snap-tab-diff"    class="snap-tab-content"></div>
+      </div>
+    </div>
   </div>
 
   <script src="js/utils.js"></script>

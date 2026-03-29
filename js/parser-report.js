@@ -48,6 +48,13 @@ const PERSON_NAME_ROW = 11; // row index (0始まり) = 12行目
 const PERSON_NAME_COL = 2;  // col index (0始まり) = C列
 const COL_DAILY    = 4;   // E列: 日払いラベル・日払い値
 
+// 個人タブの明細で「その他」とみなさない既知の業務内容ラベル
+const KNOWN_DETAIL_LABELS = ['業務報酬', '大入手当', '大入り手当', '事務所レンタル料', '事務所レント', '日払い', '日払'];
+
+// 明細行の検索範囲（個人タブ内）
+const DETAIL_SEARCH_START = 10; // 行インデックス（0始まり）
+const DETAIL_SEARCH_END   = 60;
+
 async function parseReport(buffer) {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: false });
   const warnings = [];
@@ -64,8 +71,10 @@ async function parseReport(buffer) {
 
   for (const person of people) {
     const bankResult = extractBankFromPersonSheet(wb, person.name);
-    person.bank = bankResult.bank;
-    person.sheetName = bankResult.sheetName || null;  // 個人タブ名を保持
+    person.bank          = bankResult.bank;
+    person.sheetName     = bankResult.sheetName || null;
+    person.officeRentYen = bankResult.officeRentYen ?? 0;
+    person.otherItems    = bankResult.otherItems  ?? [];
     if (bankResult.warnings.length) {
       warnings.push(...bankResult.warnings.map(w => ({ ...w, person: person.name })));
     }
@@ -149,7 +158,6 @@ function extractContractorsFromRoster(ws) {
     for (let r = headerRow; r <= blockEnd; r++) {
       const v = normText(String(getCellValue(ws, r, COL_DAILY) ?? ''));
       if (v === '日払い' || v === '日払') {
-        // 次の行のE列が数値
         const val = getCellValue(ws, r + 1, COL_DAILY);
         if (val !== null && val !== undefined && val !== '') {
           dailyPayYen = parseFloat(val) || 0;
@@ -158,11 +166,58 @@ function extractContractorsFromRoster(ws) {
       }
     }
 
+    // ★ 大入りの値: ブロック内でE列(c=4)に「大入り」が出現する行の次の行のE列
+    let oiriMan = 0;  // 大入り（万円単位）
+    for (let r = headerRow; r <= blockEnd; r++) {
+      const v = normText(String(getCellValue(ws, r, COL_DAILY) ?? ''));
+      if (v === '大入り' || v === '大入') {
+        const val = getCellValue(ws, r + 1, COL_DAILY);
+        if (val !== null && val !== undefined && val !== '') {
+          oiriMan = parseFloat(val) || 0;
+        }
+        break;
+      }
+    }
+
+    // ★ 昇給希望額: ブロック内でA列(c=0)に「昇給希望額」が出現する行の次の行のA列
+    let raiseRequestMan = 0;
+    for (let r = headerRow; r <= blockEnd; r++) {
+      const v = normText(String(getCellValue(ws, r, COL_NAME) ?? ''));
+      if (v.includes('昇給希望')) {
+        const val = getCellValue(ws, r + 1, COL_NAME);
+        if (val !== null && val !== undefined && val !== '') {
+          raiseRequestMan = parseFloat(val) || 0;
+        }
+        break;
+      }
+    }
+
+    // ★ ふりがな (F列=5)
+    const furigana = normText(String(getCellValue(ws, nameRow, 5) ?? ''));
+    // ★ 生年月日 (K列=10)
+    const birthdate = getCellValue(ws, nameRow, 10) ?? '';
+    // ★ 現住所 (nameRow+2 のA列が現住所ラベル、nameRow+3 が値)
+    let address = '';
+    for (let r = headerRow; r <= Math.min(headerRow + 6, blockEnd); r++) {
+      const v = normText(String(getCellValue(ws, r, COL_NAME) ?? ''));
+      if (v === '現住所') {
+        address = normText(String(getCellValue(ws, r + 1, COL_NAME) ?? ''));
+        break;
+      }
+    }
+
     people.push({
       name: personName,
+      furigana,
+      birthdate,
+      address,
       role: roleRaw,
       basicPayMan,
+      raiseRequestMan,
+      oiriMan,
       dailyPayYen,
+      officeRentYen: 0,   // 個人タブから後で取得
+      otherItems: [],      // 個人タブから後で取得
       bank: null,
       warnings: []
     });
@@ -227,7 +282,10 @@ function extractBankFromPersonSheet(wb, personName) {
     });
   }
 
-  return { bank, sheetName, warnings };
+  // ── 個人タブの明細から事務所レンタル料・その他を取得 ──
+  const { officeRentYen, otherItems } = extractDetailItems(ws);
+
+  return { bank, sheetName, officeRentYen, otherItems, warnings };
 }
 
 // C12検索用除外パターン（丸数字シートは除外しない＝C12で氏名を持つ個人タブを検索対象にする）
@@ -376,4 +434,78 @@ function extractBankBlock(ws, startRow, startCol) {
 function isLabelText(v) {
   const labels = ['お振込先', '振込先', '銀行', '支店', '種別', '口座', '名義', '事業者', '登録番号'];
   return labels.some(l => v.includes(l));
+}
+
+/**
+ * 個人タブの明細行から事務所レンタル料・その他項目を抽出
+ *
+ * 明細の構造（想定）:
+ *   A列 or B列: 業務内容ラベル（業務報酬、大入手当、事務所レンタル料 など）
+ *   右隣の列:   金額（数値）
+ *
+ * 既知ラベル（KNOWN_DETAIL_LABELS）以外のラベル＋金額を「その他」として収集
+ */
+function extractDetailItems(ws) {
+  let officeRentYen = 0;
+  const otherItems  = [];
+
+  if (!ws || !ws['!ref']) return { officeRentYen, otherItems };
+
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const endRow = Math.min(DETAIL_SEARCH_END, range.e.r);
+
+  for (let r = DETAIL_SEARCH_START; r <= endRow; r++) {
+    // A〜D列を走査してラベルを探す
+    for (let c = 0; c <= 3; c++) {
+      const label = normText(String(getCellValue(ws, r, c) ?? ''));
+      if (!label || label.length < 2) continue;
+
+      // 事務所レンタル料
+      if (label.includes('事務所') && (label.includes('レンタル') || label.includes('レント'))) {
+        // 同じ行の右側から金額を探す
+        const amt = findAmountInRow(ws, r, c + 1, range.e.c);
+        if (amt !== null) officeRentYen = amt;
+        break;
+      }
+
+      // その他: 既知ラベル以外で明細っぽいもの
+      const isKnown = KNOWN_DETAIL_LABELS.some(kl => label.includes(kl));
+      if (!isKnown && isDetailLabel(label)) {
+        const amt = findAmountInRow(ws, r, c + 1, range.e.c);
+        if (amt !== null && amt !== 0) {
+          // 重複チェック
+          if (!otherItems.some(o => o.label === label)) {
+            otherItems.push({ label, amount: amt });
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  return { officeRentYen, otherItems };
+}
+
+/** 行の指定列以降を走査して最初に見つかった数値を返す */
+function findAmountInRow(ws, row, startCol, endCol) {
+  for (let c = startCol; c <= Math.min(startCol + 5, endCol); c++) {
+    const val = getCellValue(ws, row, c);
+    if (val !== null && val !== undefined && val !== '' && !isNaN(parseFloat(val))) {
+      return parseFloat(val);
+    }
+  }
+  return null;
+}
+
+/** 明細ラベルらしい文字列かどうか判定（短すぎる・数字のみ・記号のみ・合計行は除外） */
+function isDetailLabel(v) {
+  if (!v || v.length < 2) return false;
+  if (/^\d+$/.test(v)) return false;           // 数字のみ
+  if (/^[¥￥\-=＝]+$/.test(v)) return false;  // 記号のみ
+  // 合計・小計・計 などの集計行は除外
+  if (/^(合計|小計|総計|計|subtotal|total)/i.test(v)) return false;
+  if (v === '合計' || v === '小計' || v === '計') return false;
+  if (v.includes('氏名') || v.includes('住所') || v.includes('生年')) return false;
+  // 業務・手当・料・費・金 などを含む場合は明細ラベルとみなす
+  return /[業務手当料費金払給賞報酬]/.test(v);
 }

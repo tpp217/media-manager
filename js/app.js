@@ -52,6 +52,8 @@ document.addEventListener('DOMContentLoaded', () => {
   setupStep5();
   setupReset();
   setupTabs();
+  setupSnapshotModal(); // モーダルのイベント設定
+  loadSnapshotList();   // 起動時にスナップショット一覧を表示
 });
 
 // ==============================
@@ -201,47 +203,91 @@ function renderContractorsTable(people) {
   }
 
   const headers = [
-    { label: '氏名',       key: 'name' },
-    { label: '役職',       key: 'roleDisplay' },
-    { label: '基本給',     key: 'basicPayManDisplay', align: 'right' },
-    { label: '日払い',     key: 'dailyPayYenDisplay', align: 'right' },
-    { label: '銀行名',     key: 'bankDisplay' },
-    { label: '支店',       key: 'branchDisplay' },
-    { label: '口座番号',   key: 'accountDisplay' },
-    { label: '名義カナ',   key: 'holderDisplay' },
-    { label: '警告',       key: 'warningBadge' }
+    { label: '氏名',           key: 'name' },
+    { label: '名義カナ',       key: 'holderDisplay' },
+    { label: '役職',           key: 'roleDisplay' },
+    { label: '基本給',         key: 'basicPayManDisplay',    align: 'right' },
+    { label: '昇給希望額',     key: 'raiseRequestDisplay',   align: 'right' },
+    { label: '大入り',         key: 'oiriDisplay',           align: 'right' },
+    { label: '日払い',         key: 'dailyPayYenDisplay',    align: 'right' },
+    { label: '事務所レンタル', key: 'officeRentDisplay',     align: 'right' },
+    { label: 'その他',         key: 'otherDisplay' },
+    { label: '警告',           key: 'warningBadge' }
   ];
 
   const rowData = people.map(c => ({
     ...c,
-    _isContractor: (c.role || '').includes('業務委託'),
-    roleDisplay:         c.role || '（不明）',
-    basicPayManDisplay:  `${c.basicPayMan ?? 0}万円`,
-    dailyPayYenDisplay:  c.dailyPayYen > 0 ? formatYen(c.dailyPayYen) : '¥0（なし）',
-    bankDisplay:         c.bank?.bankName || '-',
-    branchDisplay:       c.bank?.branchName || '-',
-    accountDisplay:      c.bank?.accountNumber ? maskAccountDisplay(c.bank.accountNumber) : '-',
-    holderDisplay:       c.bank?.accountHolderKana || '-',
-    warningBadge:        c.warnings?.length > 0 ? `⚠️ ${c.warnings.length}件` : '✓'
+    _isContractor:        (c.role || '').includes('業務委託'),
+    roleDisplay:          c.role || '（不明）',
+    basicPayManDisplay:   `${c.basicPayMan ?? 0}万円`,
+    raiseRequestDisplay:  (c.raiseRequestMan ?? 0) > 0 ? `${c.raiseRequestMan}万円` : '-',
+    oiriDisplay:          (c.oiriMan ?? 0) > 0 ? `${c.oiriMan}万円` : '-',   // 大入りは万円単位
+    dailyPayYenDisplay:   (c.dailyPayYen ?? 0) > 0 ? formatYen(c.dailyPayYen) : '-',  // 日払いのみ円
+    officeRentDisplay:    (c.officeRentYen ?? 0) > 0 ? formatYen(c.officeRentYen) : '-',
+    otherDisplay:         (c.otherItems ?? []).length > 0
+                            ? c.otherItems.map(o => `${o.label}:${formatYen(o.amount)}`).join(' / ')
+                            : '-',
+    holderDisplay:        c.bank?.accountHolderKana || '-',
+    warningBadge:         (c.warnings?.length ?? 0) > 0 ? `⚠ ${c.warnings.length}件` : '✓'
   }));
+
+  // 業務委託を上、社員を下に並び替え
+  rowData.sort((a, b) => {
+    if (a._isContractor && !b._isContractor) return -1;
+    if (!a._isContractor && b._isContractor) return 1;
+    return 0;
+  });
 
   const table = buildTable(headers, rowData, row => {
     const tr = document.createElement('tr');
-    // 業務委託以外はグレーアウト
-    if (!row._isContractor) {
-      tr.style.opacity = '0.5';
-      tr.style.background = 'var(--gray-50, #f9fafb)';
-    }
     headers.forEach(h => {
       const td = document.createElement('td');
-      td.textContent = (row[h.key] === null || row[h.key] === undefined) ? '' : row[h.key];
+      if (h.key === 'roleDisplay') {
+        // 役職バッジ（一行表示・長い場合はホバーで全文表示）
+        const span = document.createElement('span');
+        span.className = row._isContractor ? 'badge badge-ok' : 'badge badge-gray';
+        span.textContent = row[h.key];
+        span.title = row[h.key]; // ホバー時にフルテキスト表示
+        td.style.whiteSpace = 'nowrap';
+        td.appendChild(span);
+      } else if (h.key === 'warningBadge') {
+        const span = document.createElement('span');
+        const hasWarn = (row.warnings?.length > 0);
+        span.className = hasWarn ? 'badge badge-warn' : 'badge badge-ok';
+        span.textContent = row[h.key];
+        td.appendChild(span);
+      } else if (h.key === 'name') {
+        td.textContent = row[h.key] ?? '';
+        td.style.fontWeight = row._isContractor ? '700' : '400';
+        if (!row._isContractor) td.style.color = 'var(--text-muted)';
+      } else if (h.key === 'otherDisplay') {
+        // 「その他」は折り返しあり
+        td.className = 'td-wrap';
+        td.textContent = (row[h.key] === null || row[h.key] === undefined) ? '' : row[h.key];
+      } else {
+        td.textContent = (row[h.key] === null || row[h.key] === undefined) ? '' : row[h.key];
+      }
       if (h.align) td.style.textAlign = h.align;
+      // 社員行は全体的にミュート
+      if (!row._isContractor) td.style.opacity = '0.55';
       tr.appendChild(td);
     });
     return tr;
   });
 
+  // 件数サマリーヘッダー
+  const contractorCount2 = rowData.filter(r => r._isContractor).length;
+  const employeeCount    = rowData.filter(r => !r._isContractor).length;
+  const summary = document.createElement('div');
+  summary.style.cssText = 'padding:0.7rem 1rem; border-bottom:1px solid var(--border); display:flex; gap:1rem; align-items:center; font-size:0.78rem;';
+  summary.innerHTML = `
+    <span style="color:var(--text-muted)">合計 <strong style="color:var(--text-primary)">${rowData.length}名</strong></span>
+    <span class="badge badge-ok">業務委託 ${contractorCount2}名</span>
+    <span class="badge badge-gray">社員 ${employeeCount}名</span>
+  `;
+
   wrap.innerHTML = '';
+  wrap.appendChild(summary);
   wrap.appendChild(table);
   show(wrap);
 }
@@ -284,8 +330,8 @@ async function runStep3() {
     AppState.dailyPayEntries = dailyPayEntries;
     if (warnings.length > 0) warnings.forEach(w => console.warn('[月計表]', w.message));
 
-    // 業務委託 突合
-    const results = reconcile(AppState.contractors, dailyPayEntries);
+    // 業務委託 突合（allPeople 全員を渡して社員も表示、reconcile内でフラグ付与）
+    const results = reconcile(AppState.allPeople, dailyPayEntries);
     AppState.reconcileResults = results;
     renderReconcileTable(results);
 
@@ -372,11 +418,25 @@ function renderReconcileTable(results) {
     return;
   }
 
+  // サマリー（業務委託 / 社員 / 未登録）
+  const contractorCount = results.filter(r => r._isContractor && r.reportDailyPayYen !== null).length;
+  const employeeCount   = results.filter(r => !r._isContractor && r.reportDailyPayYen !== null).length;
+  const unmatchedCount  = results.filter(r => r.reportDailyPayYen === null).length;
+  const ngCount         = results.filter(r => r.status === 'NG').length;
+  const summary = document.createElement('div');
+  summary.style.cssText = 'padding:0.7rem 1rem; border-bottom:1px solid var(--border); display:flex; gap:1rem; align-items:center; flex-wrap:wrap; font-size:0.78rem;';
+  summary.innerHTML = `
+    <span class="badge badge-ok">業務委託 ${contractorCount}名</span>
+    <span class="badge badge-gray">社員 ${employeeCount}名</span>
+    ${unmatchedCount > 0 ? `<span class="badge badge-warn">名簿未登録 ${unmatchedCount}件</span>` : ''}
+    <span style="margin-left:auto" class="badge ${ngCount > 0 ? 'badge-ng' : 'badge-ok'}">NG ${ngCount}件</span>
+  `;
+
   const table = document.createElement('table');
   // ヘッダー
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  ['氏名（業務報告書）', '月計表の科目（元データ）', '報告書 日払い', '月計表 日払い', '判定', '理由', '承認'].forEach(label => {
+  ['氏名（業務報告書）', '区分', '月計表の科目（元データ）', '報告書 日払い', '月計表 日払い', '判定', '理由', '承認'].forEach(label => {
     const th = document.createElement('th');
     th.textContent = label;
     headRow.appendChild(th);
@@ -388,19 +448,30 @@ function renderReconcileTable(results) {
   results.forEach((r, idx) => {
     const tr = document.createElement('tr');
     if (r.status === 'NG') tr.classList.add('row-ng');
+    // 社員行はミュート
+    if (!r._isContractor && r.reportDailyPayYen !== null) tr.style.opacity = '0.6';
 
-    // ★★★ 修正ポイント: 氏名表示 ★★★
-    // reportDailyPayYen が null の場合 = 月計表にのみ存在
-    // この場合は元データのpersonKeyのみ表示（補完なし）
+    // 氏名列
     const nameCell = document.createElement('td');
     if (r.reportDailyPayYen === null) {
-      // 業務報告書に存在しない → 月計表のpersonKeyのみ表示
       nameCell.innerHTML = `<span class="text-muted">${escapeHtml(r.name)}</span>
         <br><span style="font-size:0.75rem;color:var(--warning)">業務報告書に未登録</span>`;
     } else {
       nameCell.textContent = r.name;
+      if (r._isContractor) nameCell.style.fontWeight = '700';
     }
     tr.appendChild(nameCell);
+
+    // 区分バッジ
+    const roleCell = document.createElement('td');
+    if (r.reportDailyPayYen === null) {
+      roleCell.innerHTML = '<span class="badge badge-warn">未登録</span>';
+    } else if (r._isContractor) {
+      roleCell.innerHTML = '<span class="badge badge-ok">委託</span>';
+    } else {
+      roleCell.innerHTML = '<span class="badge badge-gray">社員</span>';
+    }
+    tr.appendChild(roleCell);
 
     // 月計表の元データ
     const rawLabelCell = document.createElement('td');
@@ -408,6 +479,7 @@ function renderReconcileTable(results) {
     rawLabelCell.style.fontSize = '0.85rem';
     rawLabelCell.style.color = 'var(--gray-500)';
     tr.appendChild(rawLabelCell);
+
 
     // 報告書日払い
     const reportCell = document.createElement('td');
@@ -432,8 +504,9 @@ function renderReconcileTable(results) {
       : '<span class="badge badge-ng"><i class="fas fa-times"></i> NG</span>';
     tr.appendChild(statusCell);
 
-    // 理由
+    // 理由（折り返しあり）
     const reasonCell = document.createElement('td');
+    reasonCell.className = 'td-wrap';
     reasonCell.textContent = r.reason;
     reasonCell.style.fontSize = '0.85rem';
     tr.appendChild(reasonCell);
@@ -469,6 +542,7 @@ function renderReconcileTable(results) {
   table.appendChild(tbody);
 
   wrap.innerHTML = '';
+  wrap.appendChild(summary);
   wrap.appendChild(table);
   show(wrap);
 }
@@ -484,7 +558,8 @@ function setupStep4() {
 async function runStep4() {
   try {
     // ── 業務委託 スナップショット保存・差分チェック ──
-    await saveSnapshot(AppState.contractors, AppState.storeName, AppState.periodYm);
+    // allPeople（全員）＋突合結果を一緒に保存
+    await saveSnapshot(AppState.allPeople, AppState.storeName, AppState.periodYm, AppState.reconcileResults);
     const prevContractors = await getPrevSnapshot(AppState.storeName, AppState.periodYm);
     AppState.prevContractors = prevContractors;
 
@@ -525,6 +600,9 @@ async function runStep4() {
     const alerts = diffResults.filter(r => r.severity === 'alert').length;
     if (alerts > 0) showToast(`業務委託差分: ${alerts}件の要確認項目があります`, 'warning');
     else showToast('前月差分チェック完了', 'success');
+
+    // スナップショット一覧を更新
+    loadSnapshotList();
 
   } catch (e) {
     console.error('Step4 error:', e);
@@ -919,8 +997,9 @@ function renderDRReconcileTable(results) {
       : '<span class="badge badge-ng"><i class="fas fa-times"></i> NG</span>';
     tr.appendChild(statusTd);
 
-    // 理由
+    // 理由（折り返しあり）
     const reasonTd = document.createElement('td');
+    reasonTd.className = 'td-wrap';
     reasonTd.textContent = r.reason;
     reasonTd.style.fontSize = '0.85rem';
     tr.appendChild(reasonTd);
@@ -966,10 +1045,446 @@ function setupReset() {
       await deleteAllSnapshots();
       await deleteAllDRSnapshots();
       showToast('データをリセットしました（業務委託・DR両方）', 'success');
+      await loadSnapshotList(); // 一覧を再読み込み
     } catch (e) {
       showToast('リセットに失敗しました: ' + e.message, 'error');
     }
   });
+}
+
+// ==============================
+// スナップショット一覧表示
+// ==============================
+async function loadSnapshotList() {
+  const listEl   = $('snapshot-list');
+  const statusEl = $('snapshot-status');
+  if (!listEl) return;
+
+  listEl.innerHTML = '<div class="snapshot-empty"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>';
+
+  try {
+    // IndexedDB から両テーブルを取得
+    const { staffRows, drRows } = await getAllSnapshotRows();
+
+    // 年月単位でグループ化
+    // periodGroups[periodYm][storeName] = { staffCount, drCount }
+    const periodGroups = {};
+    for (const r of staffRows) {
+      if (!periodGroups[r.period_ym]) periodGroups[r.period_ym] = {};
+      if (!periodGroups[r.period_ym][r.store_name]) periodGroups[r.period_ym][r.store_name] = { staffCount: 0, drCount: 0 };
+      periodGroups[r.period_ym][r.store_name].staffCount++;
+    }
+    for (const r of drRows) {
+      if (!periodGroups[r.period_ym]) periodGroups[r.period_ym] = {};
+      if (!periodGroups[r.period_ym][r.store_name]) periodGroups[r.period_ym][r.store_name] = { staffCount: 0, drCount: 0 };
+      periodGroups[r.period_ym][r.store_name].drCount++;
+    }
+
+    const periods = Object.keys(periodGroups).sort((a, b) => b.localeCompare(a));
+
+    if (periods.length === 0) {
+      listEl.innerHTML = '<div class="snapshot-empty">[ NO DATA ] 保存済みスナップショットはありません</div>';
+      if (statusEl) statusEl.textContent = '0 records';
+      return;
+    }
+
+    const totalStores = Object.values(periodGroups).reduce((n, g) => n + Object.keys(g).length, 0);
+    if (statusEl) statusEl.textContent = `${periods.length} period(s) / ${totalStores} store(s)`;
+
+    listEl.innerHTML = '';
+    for (const periodYm of periods) {
+      const stores = periodGroups[periodYm];
+      const storeNames = Object.keys(stores).sort();
+      const [y, m] = (periodYm || '').split('-');
+      const periodLabel = y && m ? `${y}年${m}月` : periodYm;
+
+      const row = document.createElement('div');
+      row.className = 'snapshot-row';
+
+      // 年月ラベル
+      const periodSpan = document.createElement('span');
+      periodSpan.className = 'snapshot-period';
+      periodSpan.textContent = periodLabel;
+      row.appendChild(periodSpan);
+
+      // 店舗チップ群（クリックで詳細モーダル）
+      const storesWrap = document.createElement('span');
+      storesWrap.className = 'snapshot-stores';
+      for (const storeName of storeNames) {
+        const chip = document.createElement('span');
+        chip.className = 'snapshot-store-chip';
+        chip.innerHTML = `<i class="fas fa-store"></i> ${escapeHtml(storeName || '店舗名不明')}`;
+        chip.title = `${periodLabel} / ${storeName} — クリックして詳細表示`;
+        chip.addEventListener('click', () => openSnapshotModal(storeName, periodYm, periodLabel));
+        storesWrap.appendChild(chip);
+      }
+      row.appendChild(storesWrap);
+      listEl.appendChild(row);
+    }
+  } catch (e) {
+    console.error('スナップショット一覧取得エラー:', e);
+    listEl.innerHTML = '<div class="snapshot-empty">[ ERROR ] データの読み込みに失敗しました</div>';
+    if (statusEl) statusEl.textContent = 'error';
+  }
+}
+
+// ==============================
+// スナップショット詳細モーダル
+// ==============================
+function setupSnapshotModal() {
+  const overlay = $('snapshot-modal');
+  const closeBtn = $('snap-modal-close');
+
+  closeBtn.addEventListener('click', () => { overlay.style.display = 'none'; });
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.style.display = 'none'; });
+
+  // タブ切り替え
+  overlay.querySelectorAll('.snap-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      overlay.querySelectorAll('.snap-tab-btn').forEach(b => b.classList.remove('active'));
+      overlay.querySelectorAll('.snap-tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      const target = $(btn.dataset.snapTab);
+      if (target) target.classList.add('active');
+    });
+  });
+}
+
+async function openSnapshotModal(storeName, periodYm, periodLabel) {
+  const overlay = $('snapshot-modal');
+  $('snap-modal-title').textContent = `${periodLabel}  //  ${storeName}`;
+  $('snap-modal-sub').textContent   = `STORE: ${storeName}  |  PERIOD: ${periodYm}`;
+
+  // タブを委託者情報に戻す
+  document.querySelectorAll('.snap-tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.snap-tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector('.snap-tab-btn[data-snap-tab="snap-tab-people"]').classList.add('active');
+  $('snap-tab-people').classList.add('active');
+
+  // ローディング表示
+  ['snap-tab-people', 'snap-tab-reconcile', 'snap-tab-diff'].forEach(id => {
+    $(id).innerHTML = '<div style="padding:1.5rem;text-align:center;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>';
+  });
+  overlay.style.display = 'flex';
+
+  try {
+    // IndexedDB から該当レコード取得
+    const { staffRows: allStaff, drRows: allDR } = await getAllSnapshotRows();
+    const allRows = allStaff.filter(r => r.store_name === storeName && r.period_ym === periodYm);
+    const drRows  = allDR.filter(r => r.store_name === storeName && r.period_ym === periodYm);
+
+    // 前月スナップショット（差分用）
+    const [y, mo] = periodYm.split('-').map(Number);
+    let prevY = y, prevMo = mo - 1;
+    if (prevMo < 1) { prevMo = 12; prevY--; }
+    const prevYm  = `${prevY}-${String(prevMo).padStart(2, '0')}`;
+    const prevRows = allStaff.filter(r => r.store_name === storeName && r.period_ym === prevYm);
+
+    renderSnapPeopleTab(allRows);
+    renderSnapReconcileTab(allRows, drRows);
+    renderSnapDiffTab(allRows, prevRows, prevYm);
+
+  } catch (e) {
+    console.error('モーダルデータ取得エラー:', e);
+    $('snap-tab-people').innerHTML = `<div style="padding:1rem;color:var(--danger)">データ取得エラー: ${e.message}</div>`;
+  }
+}
+
+function renderSnapPeopleTab(rows) {
+  const el = $('snap-tab-people');
+  if (!rows.length) { el.innerHTML = '<div style="padding:1rem;color:var(--text-muted)">データがありません</div>'; return; }
+
+  // ステップ2と同じ並び順・項目で表示
+  // 業務委託を上、社員を下にソート
+  const sorted = [...rows].sort((a, b) => {
+    const aIsC = (a.role || '').includes('業務委託');
+    const bIsC = (b.role || '').includes('業務委託');
+    if (aIsC && !bIsC) return -1;
+    if (!aIsC && bIsC) return 1;
+    return 0;
+  });
+
+  // サマリーバー
+  const contractorCount = sorted.filter(r => (r.role || '').includes('業務委託')).length;
+  const employeeCount   = sorted.length - contractorCount;
+  const summary = document.createElement('div');
+  summary.style.cssText = 'padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);display:flex;gap:0.75rem;align-items:center;font-size:0.72rem;margin-bottom:0.5rem;';
+  summary.innerHTML = `
+    <span style="color:var(--text-muted)">合計 <strong style="color:var(--text-primary)">${sorted.length}名</strong></span>
+    <span class="badge badge-ok">業務委託 ${contractorCount}名</span>
+    <span class="badge badge-gray">社員 ${employeeCount}名</span>
+  `;
+
+  // テーブル（ステップ2と同じ列順）
+  // 氏名 / 名義カナ / 役職 / 基本給 / 昇給希望額 / 大入り / 日払い / 事務所レンタル / その他 / 警告
+  const t = document.createElement('table');
+  t.innerHTML = `<thead><tr>
+    <th>氏名</th>
+    <th>名義カナ</th>
+    <th>役職</th>
+    <th style="text-align:right">基本給</th>
+    <th style="text-align:right">昇給希望額</th>
+    <th style="text-align:right">大入り</th>
+    <th style="text-align:right">日払い</th>
+    <th style="text-align:right">事務所レンタル</th>
+    <th>その他</th>
+    <th>警告</th>
+  </tr></thead>`;
+  const tb = document.createElement('tbody');
+
+  for (const r of sorted) {
+    const isContractor = (r.role || '').includes('業務委託');
+    const tr = document.createElement('tr');
+    if (!isContractor) tr.classList.add('snap-row-employee');
+
+    const otherItems = JSON.parse(r.other_items_json || '[]');
+    const otherText  = otherItems.length
+      ? otherItems.map(o => `${o.label}:${formatYen(o.amount)}`).join(' / ')
+      : '-';
+    const warnCount = JSON.parse(r.warnings_json || '[]').length;
+    const warnText  = warnCount > 0 ? `⚠ ${warnCount}件` : '✓';
+
+    // 列定義（ステップ2と同じ順）
+    const cols = [
+      { v: r.person_name,   bold: isContractor },
+      { v: r.account_holder_kana || '-' },
+      { v: r.role || '（不明）', badge: true, isC: isContractor },
+      { v: Number(r.basic_pay_man) > 0 ? `${r.basic_pay_man}万円` : `${r.basic_pay_man ?? 0}万円`, align: 'right' },
+      { v: Number(r.raise_request_man) > 0 ? `${r.raise_request_man}万円` : '-', align: 'right' },
+      { v: Number(r.oiri_man) > 0 ? `${r.oiri_man}万円` : '-',             align: 'right' },
+      { v: Number(r.daily_pay_yen) > 0 ? formatYen(r.daily_pay_yen) : '-', align: 'right' },
+      { v: Number(r.office_rent_yen) > 0 ? formatYen(r.office_rent_yen) : '-', align: 'right' },
+      { v: otherText, wrap: true },
+      { v: warnText, warnBadge: true, hasWarn: warnCount > 0 }
+    ];
+
+    cols.forEach(col => {
+      const td = document.createElement('td');
+      if (col.align) td.style.textAlign = col.align;
+      if (col.wrap) td.className = 'td-wrap';
+
+      if (col.badge) {
+        // 役職バッジ（ステップ2と同じスタイル）
+        const span = document.createElement('span');
+        span.className = col.isC ? 'badge badge-ok' : 'badge badge-gray';
+        span.textContent = col.v;
+        span.title = col.v;
+        td.style.whiteSpace = 'nowrap';
+        td.appendChild(span);
+      } else if (col.warnBadge) {
+        const span = document.createElement('span');
+        span.className = col.hasWarn ? 'badge badge-warn' : 'badge badge-ok';
+        span.textContent = col.v;
+        td.appendChild(span);
+      } else {
+        td.textContent = col.v;
+        if (col.bold) td.style.fontWeight = '700';
+      }
+      tr.appendChild(td);
+    });
+
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+
+  el.innerHTML = '';
+  el.appendChild(summary);
+  el.appendChild(t);
+}
+
+function renderSnapReconcileTab(rows, drRows) {
+  const el = $('snap-tab-reconcile');
+  el.innerHTML = '';
+
+  const staffWithRec = rows.filter(r => r.reconcile_status && r.reconcile_status !== 'NONE');
+
+  if (!staffWithRec.length) {
+    el.innerHTML = '<div style="padding:1.5rem;color:var(--text-muted);font-family:var(--font-mono);font-size:0.75rem;">突合結果が保存されていません。<br>次回ステップ4を実行すると保存されます。</div>';
+    return;
+  }
+
+  // サマリー（NG件数 / 業務委託 / 社員）
+  const ngCount  = staffWithRec.filter(r => r.reconcile_status === 'NG').length;
+  const cCount   = staffWithRec.filter(r => (r.role || '').includes('業務委託')).length;
+  const eCount   = staffWithRec.length - cCount;
+  const summary  = document.createElement('div');
+  summary.style.cssText = 'padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);display:flex;gap:0.75rem;align-items:center;font-size:0.72rem;margin-bottom:0.5rem;flex-wrap:wrap;';
+  summary.innerHTML = `
+    <span class="badge badge-ok">業務委託 ${cCount}名</span>
+    <span class="badge badge-gray">社員 ${eCount}名</span>
+    <span style="margin-left:auto" class="badge ${ngCount > 0 ? 'badge-ng' : 'badge-ok'}">NG ${ngCount}件</span>
+  `;
+  el.appendChild(summary);
+
+  // NG先頭・業務委託優先ソート（ステップ3と同じ）
+  const sorted = [...staffWithRec].sort((a, b) => {
+    if (a.reconcile_status === 'NG' && b.reconcile_status !== 'NG') return -1;
+    if (a.reconcile_status !== 'NG' && b.reconcile_status === 'NG') return 1;
+    const aC = (a.role || '').includes('業務委託');
+    const bC = (b.role || '').includes('業務委託');
+    if (aC && !bC) return -1;
+    if (!aC && bC) return 1;
+    return 0;
+  });
+
+  // ステップ3と同じ列順：氏名 / 区分 / 報告書日払い / 月計表日払い / 判定 / 理由
+  const t = document.createElement('table');
+  t.innerHTML = `<thead><tr>
+    <th>氏名</th>
+    <th>区分</th>
+    <th style="text-align:right">報告書 日払い</th>
+    <th style="text-align:right">月計表 日払い</th>
+    <th>判定</th>
+    <th>理由</th>
+  </tr></thead>`;
+  const tb = document.createElement('tbody');
+
+  sorted.forEach(r => {
+    const isContractor = (r.role || '').includes('業務委託');
+    const tr = document.createElement('tr');
+    if (r.reconcile_status === 'NG') tr.classList.add('snap-row-ng');
+    if (!isContractor) tr.classList.add('snap-row-employee');
+
+    // 氏名
+    const nameTd = document.createElement('td');
+    nameTd.textContent = r.person_name;
+    if (isContractor) nameTd.style.fontWeight = '700';
+    tr.appendChild(nameTd);
+
+    // 区分バッジ
+    const roleTd = document.createElement('td');
+    roleTd.innerHTML = isContractor
+      ? '<span class="badge badge-ok">委託</span>'
+      : '<span class="badge badge-gray">社員</span>';
+    tr.appendChild(roleTd);
+
+    // 報告書日払い
+    const repTd = document.createElement('td');
+    repTd.style.textAlign = 'right';
+    repTd.textContent = Number(r.daily_pay_yen) > 0 ? formatYen(r.daily_pay_yen) : '-';
+    tr.appendChild(repTd);
+
+    // 月計表日払い
+    const monTd = document.createElement('td');
+    monTd.style.textAlign = 'right';
+    monTd.textContent = Number(r.reconcile_monthly_yen) > 0 ? formatYen(r.reconcile_monthly_yen) : '-';
+    tr.appendChild(monTd);
+
+    // 判定バッジ
+    const stTd = document.createElement('td');
+    stTd.innerHTML = r.reconcile_status === 'OK'
+      ? '<span class="badge badge-ok"><i class="fas fa-check"></i> OK</span>'
+      : '<span class="badge badge-ng"><i class="fas fa-times"></i> NG</span>';
+    tr.appendChild(stTd);
+
+    // 理由（折り返しあり）
+    const reTd = document.createElement('td');
+    reTd.className = 'td-wrap';
+    reTd.textContent = r.reconcile_reason || '-';
+    reTd.style.fontSize = '0.78rem';
+    tr.appendChild(reTd);
+
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  el.appendChild(t);
+
+  // DR情報（DRスナップショットがある場合）
+  if (drRows.length) {
+    const h2 = document.createElement('div');
+    h2.style.cssText = 'padding:1rem 0 0.3rem;font-family:var(--font-mono);font-size:0.67rem;color:var(--info);letter-spacing:0.1em;border-top:1px solid var(--border);margin-top:0.75rem;';
+    h2.textContent = `▸ DR ${drRows.length}名`;
+    el.appendChild(h2);
+
+    // ステップ3のDRテーブルと同じ列：DRタブ名 / 氏名 / 仮払 / ドライバー報酬 / 合計
+    const t2 = document.createElement('table');
+    t2.innerHTML = `<thead><tr>
+      <th>DRタブ名</th><th>氏名</th>
+      <th style="text-align:right">仮払（日払い）</th>
+      <th style="text-align:right">ドライバー報酬</th>
+      <th style="text-align:right">合計</th>
+    </tr></thead>`;
+    const tb2 = document.createElement('tbody');
+    drRows.forEach(r => {
+      const tr = document.createElement('tr');
+      [
+        { v: r.sheet_name || '-' },
+        { v: r.person_name },
+        { v: formatYen(r.karibara_yen), align: 'right' },
+        { v: formatYen(r.driver_reward), align: 'right' },
+        { v: formatYen(r.total_amount),  align: 'right' }
+      ].forEach(col => {
+        const td = document.createElement('td');
+        td.textContent = col.v;
+        if (col.align) td.style.textAlign = col.align;
+        tr.appendChild(td);
+      });
+      tb2.appendChild(tr);
+    });
+    t2.appendChild(tb2);
+    el.appendChild(t2);
+  }
+}
+
+function renderSnapDiffTab(currentRows, prevRows, prevYm) {
+  const el = $('snap-tab-diff');
+  if (!prevRows.length) {
+    const [py, pm] = (prevYm || '').split('-');
+    const prevLabel = py && pm ? `${py}年${pm}月` : prevYm;
+    el.innerHTML = `<div style="padding:1.5rem;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted)">
+      前月（${prevLabel}）のスナップショットがないため差分を表示できません。
+    </div>`;
+    return;
+  }
+
+  // 前月マップ（氏名キー）
+  const prevMap = {};
+  prevRows.forEach(r => { prevMap[r.person_key] = r; });
+
+  const diffs = [];
+  for (const r of currentRows) {
+    const prev = prevMap[r.person_key];
+    if (!prev) {
+      diffs.push({ name: r.person_name, label: '新規追加', before: '-', after: r.role || '-', severity: 'alert' });
+      continue;
+    }
+    if (Number(r.basic_pay_man) !== Number(prev.basic_pay_man))
+      diffs.push({ name: r.person_name, label: '基本給変更', before: `${prev.basic_pay_man}万円`, after: `${r.basic_pay_man}万円`, severity: 'alert' });
+    if (Number(r.daily_pay_yen) !== Number(prev.daily_pay_yen))
+      diffs.push({ name: r.person_name, label: '日払い変更', before: formatYen(prev.daily_pay_yen), after: formatYen(r.daily_pay_yen), severity: 'alert' });
+    if (r.account_number && prev.account_number && r.account_number !== prev.account_number)
+      diffs.push({ name: r.person_name, label: '口座番号変更', before: '****' + String(prev.account_number).slice(-4), after: '****' + String(r.account_number).slice(-4), severity: 'alert' });
+    if (r.bank_name !== prev.bank_name && r.bank_name)
+      diffs.push({ name: r.person_name, label: '銀行変更', before: prev.bank_name || '-', after: r.bank_name, severity: 'alert' });
+  }
+  // 退職者
+  const currentKeys = new Set(currentRows.map(r => r.person_key));
+  for (const r of prevRows) {
+    if (!currentKeys.has(r.person_key))
+      diffs.push({ name: r.person_name, label: '退職／削除', before: r.role || '-', after: '-', severity: 'alert' });
+  }
+
+  if (!diffs.length) {
+    el.innerHTML = '<div style="padding:1.5rem;text-align:center;font-family:var(--font-mono);font-size:0.75rem;color:var(--neon)">[ 差分なし ] 前月から変更はありません</div>';
+    return;
+  }
+
+  const t = document.createElement('table');
+  t.innerHTML = `<thead><tr><th>氏名</th><th>変更種別</th><th>変更前</th><th>変更後</th></tr></thead>`;
+  const tb = document.createElement('tbody');
+  diffs.forEach(d => {
+    const tr = document.createElement('tr');
+    tr.classList.add('snap-row-ng');
+    [d.name].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+    const labelTd = document.createElement('td');
+    labelTd.innerHTML = `<span class="badge badge-ng">${escapeHtml(d.label)}</span>`;
+    tr.appendChild(labelTd);
+    [d.before, d.after].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  el.innerHTML = '';
+  el.appendChild(t);
 }
 
 // ==============================
