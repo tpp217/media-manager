@@ -244,14 +244,6 @@ function renderContractorsTable(people) {
     <span class="badge badge-gray">その他 ${others.length}名</span>
   `;
 
-  // タブバー
-  const tabBar = document.createElement('div');
-  tabBar.className = 'tab-bar';
-  tabBar.innerHTML = `
-    <button class="tab-btn active" data-ctab="tab-c2-contractor"><i class="fas fa-user-check"></i> 業務委託</button>
-    <button class="tab-btn" data-ctab="tab-c2-other"><i class="fas fa-users"></i> その他</button>
-  `;
-
   // テーブル生成ヘルパー
   function buildPeopleTable(rows) {
     const table = buildTable(headers, rows, row => {
@@ -288,43 +280,18 @@ function renderContractorsTable(people) {
     return table;
   }
 
-  // 各タブコンテンツ
-  const tabContractor = document.createElement('div');
-  tabContractor.id = 'tab-c2-contractor';
-  tabContractor.className = 'tab-content active';
-  if (contractors.length === 0) {
-    tabContractor.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">業務委託者がいません</div>';
-  } else {
-    tabContractor.appendChild(buildPeopleTable(contractors));
-  }
-
-  const tabOther = document.createElement('div');
-  tabOther.id = 'tab-c2-other';
-  tabOther.className = 'tab-content';
-  if (others.length === 0) {
-    tabOther.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">その他の方はいません</div>';
-  } else {
-    tabOther.appendChild(buildPeopleTable(others));
-  }
-
+  // タブなし・全員を1枚テーブルで表示
   wrap.innerHTML = '';
   wrap.appendChild(summary);
-  wrap.appendChild(tabBar);
-  wrap.appendChild(tabContractor);
-  wrap.appendChild(tabOther);
+  if (rowData.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:1.5rem;text-align:center;color:var(--gray-400)';
+    empty.textContent = '社員名簿に人員が見つかりません';
+    wrap.appendChild(empty);
+  } else {
+    wrap.appendChild(buildPeopleTable(rowData));
+  }
   show(wrap);
-
-  // タブ切り替えイベント（この要素内のみ）
-  tabBar.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      tabBar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const targetId = btn.dataset.ctab;
-      [tabContractor, tabOther].forEach(el => el.classList.remove('active'));
-      const target = document.getElementById(targetId);
-      if (target) target.classList.add('active');
-    });
-  });
 }
 
 function maskAccountDisplay(num) {
@@ -787,24 +754,15 @@ function setupStep5() {
   $('btn-step5-back').addEventListener('click', () => goToStep(4));
   $('btn-step5-download').addEventListener('click', handleDownload);
   $('btn-step5-dr-download').addEventListener('click', handleDRDownload);
+  $('btn-step5-restart').addEventListener('click', () => goToStep(1));
 }
 
 function runStep5() {
-  // 業務委託プレビュー
-  const { rows: staffRows, total: staffTotal } = buildInvoicePreviewData(AppState.contractors, AppState.periodYm);
-  renderInvoicePreview('invoice-preview-staff', staffRows, staffTotal, false);
-
-  // DRプレビュー
-  if (AppState.drList && AppState.drList.length > 0) {
-    const { rows: drRows, total: drTotal } = buildDRInvoicePreviewData(AppState.drList, AppState.periodYm);
-    renderInvoicePreview('invoice-preview-dr', drRows, drTotal, true);
-    $('tab-output-dr-btn').style.display = '';
+  // DRファイルがある場合のみDRダウンロードボタンを表示
+  if (AppState.drBuffer) {
     $('btn-step5-dr-download').style.display = '';
   } else {
-    $('tab-output-dr-btn').style.display = 'none';
     $('btn-step5-dr-download').style.display = 'none';
-    $('invoice-preview-dr').innerHTML = '<div style="padding:1rem;color:var(--gray-400)">DRファイルが未アップロードのため出力できません。</div>';
-    show($('invoice-preview-dr'));
   }
 }
 
@@ -1486,47 +1444,86 @@ function renderSnapDiffTab(currentRows, prevRows, prevYm) {
     return;
   }
 
-  // 前月マップ（氏名キー）
+  // 前月マップ（person_keyで照合）
   const prevMap = {};
   prevRows.forEach(r => { prevMap[r.person_key] = r; });
 
   const diffs = [];
+
   for (const r of currentRows) {
     const prev = prevMap[r.person_key];
     if (!prev) {
-      diffs.push({ name: r.person_name, label: '新規追加', before: '-', after: r.role || '-', severity: 'alert' });
+      diffs.push({ name: r.person_name, label: '新規追加', before: '-', after: r.role || '-', severity: 'info' });
       continue;
     }
-    if (Number(r.basic_pay_man) !== Number(prev.basic_pay_man))
+
+    let hasChange = false;
+
+    // 役職
+    if ((r.role || '') !== (prev.role || '')) {
+      diffs.push({ name: r.person_name, label: '役職変更', before: prev.role || '（空）', after: r.role || '（空）', severity: 'alert' });
+      hasChange = true;
+    }
+    // 基本給
+    if (Number(r.basic_pay_man) !== Number(prev.basic_pay_man)) {
       diffs.push({ name: r.person_name, label: '基本給変更', before: `${prev.basic_pay_man}万円`, after: `${r.basic_pay_man}万円`, severity: 'alert' });
-    if (Number(r.daily_pay_yen) !== Number(prev.daily_pay_yen))
-      diffs.push({ name: r.person_name, label: '日払い変更', before: formatYen(prev.daily_pay_yen), after: formatYen(r.daily_pay_yen), severity: 'alert' });
-    if (r.account_number && prev.account_number && r.account_number !== prev.account_number)
-      diffs.push({ name: r.person_name, label: '口座番号変更', before: '****' + String(prev.account_number).slice(-4), after: '****' + String(r.account_number).slice(-4), severity: 'alert' });
-    if (r.bank_name !== prev.bank_name && r.bank_name)
-      diffs.push({ name: r.person_name, label: '銀行変更', before: prev.bank_name || '-', after: r.bank_name, severity: 'alert' });
+      hasChange = true;
+    }
+    // 振込先（銀行名・支店名・口座種別・口座番号・名義カナ）
+    const bankFields = [
+      { key: 'bank_name',           label: '銀行名' },
+      { key: 'branch_name',         label: '支店名' },
+      { key: 'account_type',        label: '口座種別' },
+      { key: 'account_number',      label: '口座番号' },
+      { key: 'account_holder_kana', label: '名義カナ' }
+    ];
+    for (const f of bankFields) {
+      const cv = String(r[f.key] ?? '');
+      const pv = String(prev[f.key] ?? '');
+      if (cv !== pv) {
+        const dispBefore = f.key === 'account_number' ? ('****' + pv.slice(-4)) : (pv || '-');
+        const dispAfter  = f.key === 'account_number' ? ('****' + cv.slice(-4)) : (cv || '-');
+        diffs.push({ name: r.person_name, label: `振込先変更（${f.label}）`, before: dispBefore, after: dispAfter, severity: 'alert' });
+        hasChange = true;
+      }
+    }
+    // 会社名
+    if ((r.company_name || '') !== (prev.company_name || '')) {
+      diffs.push({ name: r.person_name, label: '会社名変更', before: prev.company_name || '（空）', after: r.company_name || '（空）', severity: 'alert' });
+      hasChange = true;
+    }
+    // 日付
+    if ((r.invoice_date || '') !== (prev.invoice_date || '')) {
+      diffs.push({ name: r.person_name, label: '日付変更', before: prev.invoice_date || '（空）', after: r.invoice_date || '（空）', severity: 'alert' });
+      hasChange = true;
+    }
+
+    if (!hasChange) {
+      diffs.push({ name: r.person_name, label: '変更なし', before: '-', after: '-', severity: 'ok' });
+    }
   }
-  // 退職者
+
+  // 退職者（今月いない人）
   const currentKeys = new Set(currentRows.map(r => r.person_key));
   for (const r of prevRows) {
     if (!currentKeys.has(r.person_key))
-      diffs.push({ name: r.person_name, label: '退職／削除', before: r.role || '-', after: '-', severity: 'alert' });
+      diffs.push({ name: r.person_name, label: '削除', before: r.role || '-', after: '-', severity: 'info' });
   }
 
-  if (!diffs.length) {
-    el.innerHTML = '<div style="padding:1.5rem;text-align:center;font-family:var(--font-mono);font-size:0.75rem;color:var(--neon)">[ 差分なし ] 前月から変更はありません</div>';
-    return;
-  }
+  // alertを先頭に
+  const order = { alert: 0, info: 1, ok: 2 };
+  diffs.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
 
   const t = document.createElement('table');
   t.innerHTML = `<thead><tr><th>氏名</th><th>変更種別</th><th>変更前</th><th>変更後</th></tr></thead>`;
   const tb = document.createElement('tbody');
   diffs.forEach(d => {
     const tr = document.createElement('tr');
-    tr.classList.add('snap-row-ng');
+    if (d.severity === 'alert') tr.classList.add('snap-row-ng');
     [d.name].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
     const labelTd = document.createElement('td');
-    labelTd.innerHTML = `<span class="badge badge-ng">${escapeHtml(d.label)}</span>`;
+    const badgeClass = d.severity === 'alert' ? 'badge-ng' : d.severity === 'info' ? 'badge-gray' : 'badge-ok';
+    labelTd.innerHTML = `<span class="badge ${badgeClass}">${escapeHtml(d.label)}</span>`;
     tr.appendChild(labelTd);
     [d.before, d.after].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
     tb.appendChild(tr);

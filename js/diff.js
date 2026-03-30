@@ -129,6 +129,38 @@ function checkDiff(currentContractors, prevContractors) {
         isManualApproved: false
       });
     }
+
+    // ── 会社名（明細書）チェック ──
+    const currCompany = normText(String(c.companyName ?? ''));
+    const prevCompany = normText(String(prev.companyName ?? ''));
+    if (currCompany !== prevCompany) {
+      results.push({
+        name: c.name, personKey: key,
+        type: 'COMPANY_CHANGE',
+        severity: 'alert',
+        label: '会社名変更（要確認）',
+        before: prevCompany || '（空）',
+        after:  currCompany || '（空）',
+        details: '明細書の会社名が変更されました',
+        isManualApproved: false
+      });
+    }
+
+    // ── 日付（明細書）チェック ──
+    const currDate = normText(String(c.invoiceDate ?? ''));
+    const prevDate = normText(String(prev.invoiceDate ?? ''));
+    if (currDate !== prevDate) {
+      results.push({
+        name: c.name, personKey: key,
+        type: 'DATE_CHANGE',
+        severity: 'alert',
+        label: '日付変更（要確認）',
+        before: prevDate || '（空）',
+        after:  currDate || '（空）',
+        details: '明細書の日付が変更されました',
+        isManualApproved: false
+      });
+    }
   }
 
   // 先月いたが今月いない人
@@ -178,24 +210,24 @@ function checkDiff(currentContractors, prevContractors) {
 }
 
 /**
- * 人名→キーのマップを作成（同姓がいる場合は名前の一部まで含む）
- * getSurname() / normalizePersonName() の既存ロジックを活用
+ * 人名→キーのマップを作成
+ * ルール: 常に normalizePersonName（フルネーム正規化）をキーとして使う。
+ * 同姓混同を防ぐため苗字だけのキーは使わない。
  */
 function buildPersonMap(people) {
   const map = {};
   for (const p of people) {
-    const key = getSurname(normalizePersonName(p.name));
+    const key = normalizePersonName(p.name);
     map[key] = p;
   }
   return map;
 }
 
 /**
- * 人物のキーを解決する
- * 同姓が複数いる可能性を考慮し、苗字キーを返す
+ * 人物のキーを解決する（フルネーム正規化で統一）
  */
 function resolvePersonKey(name, personMap) {
-  return getSurname(normalizePersonName(name));
+  return normalizePersonName(name);
 }
 
 /**
@@ -271,24 +303,6 @@ function checkDRDiff(currentDrList, prevDrList) {
         isManualApproved: false
       });
       continue;
-    }
-
-    // ── ドライバー報酬チェック ──
-    const currReward = Number(c.driverReward ?? 0);
-    const prevReward = Number(prev.driverReward ?? 0);
-    if (currReward !== prevReward) {
-      const delta = currReward - prevReward;
-      results.push({
-        name: c.name,
-        personKey: key,
-        type: 'REWARD_CHANGE',
-        severity: 'alert',
-        label: 'ドライバー報酬変更（要確認）',
-        before: formatYen(prevReward),
-        after:  formatYen(currReward),
-        details: `差分: ${delta > 0 ? '+' : ''}${formatYen(delta)}`,
-        isManualApproved: false
-      });
     }
 
     // ── 振込先情報チェック ──
