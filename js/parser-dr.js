@@ -188,10 +188,8 @@ function extractDRBankBlock(ws) {
 
 /**
  * DR名寄せ用キー生成
- * 月計表の「DR能條　日払い」→ normalizePersonName → "能條"
- * DRタブの氏名「能條　正和」→ getSurname → "能條"
- * で照合する
+ * フルネームで照合して同姓の別人（例: 鈴木 隆宏 / 鈴木 潤）を区別する
  */
 function getDRKey(name) {
-  return getSurname(normText(name));
+  return normalizePersonName(normText(name));
 }
