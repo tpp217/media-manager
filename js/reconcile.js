@@ -232,7 +232,7 @@ function reconcileDR(drList, dailyPayEntries) {
     const drFullKey = normalizePersonName(dr.name);
     const karibaraiYen = dr.karibaraiYen ?? 0;
 
-    // 適格請求支払手数料チェック: driverReward × 2%（端数 ±1円許容）
+    // ２％チェック: driverReward × 2%（端数 ±1円許容）
     const feeExpected = Math.round((dr.driverReward ?? 0) * 0.02);
     const feeActual   = dr.actualFee ?? 0;
     const feeCheck    = {

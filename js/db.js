@@ -225,20 +225,32 @@ const DR_DB_TABLE = 'dr_snapshots';
 /**
  * DRスナップショット保存
  */
-async function saveDRSnapshot(drList, storeName, periodYm) {
+async function saveDRSnapshot(drList, storeName, periodYm, reconcileResults) {
   const db = await openDB();
   await deleteDRSnapshotsByStorePeriod(storeName, periodYm);
 
+  // 突合結果をDR名キーでマップ化
+  const recMap = {};
+  if (reconcileResults) {
+    for (const rec of reconcileResults) {
+      recMap[normalizePersonName(rec.name)] = rec;
+    }
+  }
+
   for (const dr of drList) {
+    const rec = recMap[normalizePersonName(dr.name)];
     const row = {
       store_name:           storeName,
       period_ym:            periodYm,
-      person_key:           getDRKey(dr.name),
+      person_key:           normalizePersonName(dr.name),
       person_name:          dr.name,
       sheet_name:           dr.sheetName   ?? '',
       driver_reward:        dr.driverReward  ?? 0,
       karibara_yen:         dr.karibaraiYen  ?? 0,
       total_amount:         dr.totalAmount   ?? 0,
+      reconcile_status:     rec?.status      ?? 'NONE',
+      reconcile_reason:     rec?.reason      ?? '',
+      reconcile_monthly_yen: rec?.monthlyDailyPayYen ?? 0,
       bank_name:            dr.bank?.bankName           ?? '',
       branch_name:          dr.bank?.branchName         ?? '',
       account_type:         dr.bank?.accountType        ?? '',
@@ -258,12 +270,15 @@ async function getDRSnapshot(storeName, periodYm) {
   return rows
     .filter(r => r.store_name === storeName && r.period_ym === periodYm)
     .map(r => ({
-      name:          r.person_name,
-      personKey:     r.person_key,
-      sheetName:     r.sheet_name,
-      driverReward:  Number(r.driver_reward  ?? 0),
-      karibaraiYen:  Number(r.karibara_yen   ?? 0),
-      totalAmount:   Number(r.total_amount   ?? 0),
+      name:                r.person_name,
+      personKey:           r.person_key,
+      sheetName:           r.sheet_name,
+      driverReward:        Number(r.driver_reward  ?? 0),
+      karibaraiYen:        Number(r.karibara_yen   ?? 0),
+      totalAmount:         Number(r.total_amount   ?? 0),
+      reconcileStatus:     r.reconcile_status      ?? 'NONE',
+      reconcileReason:     r.reconcile_reason      ?? '',
+      reconcileMonthlyYen: Number(r.reconcile_monthly_yen ?? 0),
       bank: {
         bankName:          r.bank_name           ?? '',
         branchName:        r.branch_name         ?? '',

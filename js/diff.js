@@ -245,7 +245,7 @@ function maskAccountNumber(fieldKey, value) {
 function checkDiffFirstTime(currentContractors) {
   return currentContractors.map(c => ({
     name: c.name,
-    personKey: getSurname(normalizePersonName(c.name)),
+    personKey: normalizePersonName(c.name),
     type: 'NEW',
     severity: 'info',
     label: '初回登録',
@@ -277,17 +277,17 @@ function checkDRDiff(currentDrList, prevDrList) {
 
   const prevMap = {};
   for (const p of prevDrList) {
-    prevMap[p.personKey ?? getDRKey(p.name)] = p;
+    prevMap[p.personKey ?? normalizePersonName(p.name)] = p;
   }
 
   const currMap = {};
   for (const c of currentDrList) {
-    currMap[getDRKey(c.name)] = c;
+    currMap[normalizePersonName(c.name)] = c;
   }
 
   // 今月のDR
   for (const c of currentDrList) {
-    const key = getDRKey(c.name);
+    const key = normalizePersonName(c.name);
     const prev = prevMap[key];
 
     if (!prev) {
@@ -344,7 +344,7 @@ function checkDRDiff(currentDrList, prevDrList) {
 
   // 先月いたが今月いないDR
   for (const p of prevDrList) {
-    const key = p.personKey ?? getDRKey(p.name);
+    const key = p.personKey ?? normalizePersonName(p.name);
     if (!currMap[key]) {
       results.push({
         name: p.name,
@@ -363,7 +363,7 @@ function checkDRDiff(currentDrList, prevDrList) {
   // 変更なし
   const changedKeys = new Set(results.map(r => r.personKey));
   for (const c of currentDrList) {
-    const key = getDRKey(c.name);
+    const key = normalizePersonName(c.name);
     if (prevMap[key] && !changedKeys.has(key)) {
       results.push({
         name: c.name,
@@ -394,7 +394,7 @@ function checkDRDiff(currentDrList, prevDrList) {
 function checkDRDiffFirstTime(currentDrList) {
   return currentDrList.map(dr => ({
     name: dr.name,
-    personKey: getDRKey(dr.name),
+    personKey: normalizePersonName(dr.name),
     type: 'NEW',
     severity: 'info',
     label: '初回登録',

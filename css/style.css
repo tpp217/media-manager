@@ -129,7 +129,7 @@ body::before {
 
 .header-inner {
   width: 100%;
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -183,7 +183,7 @@ body::before {
   padding: 0.8rem 1.5rem;
 }
 .step-nav-inner {
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -243,7 +243,7 @@ body::before {
    MAIN CONTENT
 ═══════════════════════════════════════════ */
 .main-content {
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 2rem auto;
   padding: 0 1.5rem 4rem;
 }
@@ -1011,7 +1011,7 @@ tr.row-dr-ng td     { background: rgba(255,51,85,0.05); }
 }
 .snap-modal {
   width: 100%;
-  max-width: 860px;
+  max-width: 1100px;
   background: var(--bg-panel);
   border: 1px solid var(--neon-border);
   box-shadow: 0 0 40px rgba(0,255,136,0.15);
