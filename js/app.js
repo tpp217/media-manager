@@ -932,7 +932,7 @@ function renderDRReconcileTable(results) {
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  ['DRタブ名', '氏名', '月計表の科目（元データ）', 'DRファイル仮払', '月計表 日払い', 'ドライバー報酬', '適格請求支払手数料チェック', '判定', '理由', '承認'].forEach(label => {
+  ['DRタブ名', '氏名', '月計表の科目（元データ）', 'DRファイル仮払', '月計表 日払い', 'ドライバー報酬', '２％チェック', '判定', '理由', '承認'].forEach(label => {
     const th = document.createElement('th');
     th.textContent = label;
     headRow.appendChild(th);
@@ -1588,11 +1588,7 @@ function renderSnapDiffTab(currentRows, prevRows, prevYm, currentDrRows, prevDrR
         continue;
       }
       let hasChange = false;
-      // ドライバー報酬
-      if (Number(r.driver_reward) !== Number(prev.driver_reward)) {
-        drDiffs.push({ name: r.person_name, label: 'ドライバー報酬変更', before: formatYen(prev.driver_reward), after: formatYen(r.driver_reward), severity: 'alert' });
-        hasChange = true;
-      }
+      // ドライバー報酬は毎月変動するため差分チェック対象外
       // 振込先
       const drBankFields = [
         { key: 'bank_name', label: '銀行名' }, { key: 'branch_name', label: '支店名' },
