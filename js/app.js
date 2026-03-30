@@ -405,10 +405,12 @@ async function runStep3() {
 }
 
 function renderReconcileKPI(results) {
-  const okCount = results.filter(r => r.status === 'OK').length;
-  const ngCount = results.filter(r => r.status === 'NG').length;
-  $('kpi-ok-count').textContent = okCount;
-  $('kpi-ng-count').textContent = ngCount;
+  const staffNg = results.filter(r => r.status === 'NG').length;
+  const staffOk = results.filter(r => r.status === 'OK').length;
+  const drNg = (AppState.drReconcileResults || []).filter(r => r.status === 'NG').length;
+  const drOk = (AppState.drReconcileResults || []).filter(r => r.status === 'OK').length;
+  $('kpi-ok-count').textContent = staffOk + drOk;
+  $('kpi-ng-count').textContent = staffNg + drNg;
   show($('reconcile-kpi'));
 }
 
@@ -576,7 +578,7 @@ async function runStep4() {
 
     // ── DR スナップショット保存・差分チェック ──
     if (AppState.drList && AppState.drList.length > 0) {
-      await saveDRSnapshot(AppState.drList, AppState.storeName, AppState.periodYm);
+      await saveDRSnapshot(AppState.drList, AppState.storeName, AppState.periodYm, AppState.drReconcileResults);
       const prevDrList = await getPrevDRSnapshot(AppState.storeName, AppState.periodYm);
       AppState.prevDrList = prevDrList;
 
@@ -1185,11 +1187,12 @@ async function openSnapshotModal(storeName, periodYm, periodLabel) {
     let prevY = y, prevMo = mo - 1;
     if (prevMo < 1) { prevMo = 12; prevY--; }
     const prevYm  = `${prevY}-${String(prevMo).padStart(2, '0')}`;
-    const prevRows = allStaff.filter(r => r.store_name === storeName && r.period_ym === prevYm);
+    const prevRows   = allStaff.filter(r => r.store_name === storeName && r.period_ym === prevYm);
+    const prevDrRows = allDR.filter(r => r.store_name === storeName && r.period_ym === prevYm);
 
     renderSnapPeopleTab(allRows);
     renderSnapReconcileTab(allRows, drRows);
-    renderSnapDiffTab(allRows, prevRows, prevYm);
+    renderSnapDiffTab(allRows, prevRows, prevYm, drRows, prevDrRows);
 
   } catch (e) {
     console.error('モーダルデータ取得エラー:', e);
@@ -1396,36 +1399,73 @@ function renderSnapReconcileTab(rows, drRows) {
   t.appendChild(tb);
   el.appendChild(t);
 
-  // DR情報（DRスナップショットがある場合）
+  // DR情報（DRスナップショットがある場合）— 業務委託と同じ列で表示
   if (drRows.length) {
     const h2 = document.createElement('div');
     h2.style.cssText = 'padding:1rem 0 0.3rem;font-family:var(--font-mono);font-size:0.67rem;color:var(--info);letter-spacing:0.1em;border-top:1px solid var(--border);margin-top:0.75rem;';
-    h2.textContent = `▸ DR ${drRows.length}名`;
+    const drNgCount = drRows.filter(r => r.reconcile_status === 'NG').length;
+    h2.innerHTML = `▸ DR ${drRows.length}名　<span class="badge ${drNgCount > 0 ? 'badge-ng' : 'badge-ok'}" style="vertical-align:middle">NG ${drNgCount}件</span>`;
     el.appendChild(h2);
 
-    // ステップ3のDRテーブルと同じ列：DRタブ名 / 氏名 / 仮払 / ドライバー報酬 / 合計
+    // 業務委託と同じ列順：氏名 / 区分 / 報告書日払い（仮払） / 月計表日払い / 判定 / 理由
     const t2 = document.createElement('table');
     t2.innerHTML = `<thead><tr>
-      <th>DRタブ名</th><th>氏名</th>
-      <th style="text-align:right">仮払（日払い）</th>
-      <th style="text-align:right">ドライバー報酬</th>
-      <th style="text-align:right">合計</th>
+      <th>氏名</th>
+      <th>区分</th>
+      <th style="text-align:right">DRファイル仮払</th>
+      <th style="text-align:right">月計表 日払い</th>
+      <th>判定</th>
+      <th>理由</th>
     </tr></thead>`;
     const tb2 = document.createElement('tbody');
-    drRows.forEach(r => {
+    const drSorted = [...drRows].sort((a, b) => {
+      if (a.reconcile_status === 'NG' && b.reconcile_status !== 'NG') return -1;
+      if (a.reconcile_status !== 'NG' && b.reconcile_status === 'NG') return 1;
+      return 0;
+    });
+    drSorted.forEach(r => {
       const tr = document.createElement('tr');
-      [
-        { v: r.sheet_name || '-' },
-        { v: r.person_name },
-        { v: formatYen(r.karibara_yen), align: 'right' },
-        { v: formatYen(r.driver_reward), align: 'right' },
-        { v: formatYen(r.total_amount),  align: 'right' }
-      ].forEach(col => {
-        const td = document.createElement('td');
-        td.textContent = col.v;
-        if (col.align) td.style.textAlign = col.align;
-        tr.appendChild(td);
-      });
+      if (r.reconcile_status === 'NG') tr.classList.add('snap-row-ng');
+
+      // 氏名
+      const nameTd = document.createElement('td');
+      nameTd.textContent = r.person_name;
+      nameTd.style.fontWeight = '700';
+      tr.appendChild(nameTd);
+
+      // 区分バッジ
+      const roleTd = document.createElement('td');
+      roleTd.innerHTML = '<span class="badge badge-info">DR</span>';
+      tr.appendChild(roleTd);
+
+      // DRファイル仮払
+      const kariTd = document.createElement('td');
+      kariTd.style.textAlign = 'right';
+      kariTd.textContent = Number(r.karibara_yen) > 0 ? formatYen(r.karibara_yen) : '-';
+      tr.appendChild(kariTd);
+
+      // 月計表日払い
+      const monTd = document.createElement('td');
+      monTd.style.textAlign = 'right';
+      const monYen = Number(r.reconcile_monthly_yen ?? 0);
+      monTd.textContent = monYen > 0 ? formatYen(monYen) : '-';
+      tr.appendChild(monTd);
+
+      // 判定バッジ
+      const stTd = document.createElement('td');
+      const st = r.reconcile_status ?? 'NONE';
+      if (st === 'OK') stTd.innerHTML = '<span class="badge badge-ok"><i class="fas fa-check"></i> OK</span>';
+      else if (st === 'NG') stTd.innerHTML = '<span class="badge badge-ng"><i class="fas fa-times"></i> NG</span>';
+      else stTd.innerHTML = '<span class="badge badge-gray">—</span>';
+      tr.appendChild(stTd);
+
+      // 理由
+      const reTd = document.createElement('td');
+      reTd.className = 'td-wrap';
+      reTd.textContent = r.reconcile_reason || '-';
+      reTd.style.fontSize = '0.78rem';
+      tr.appendChild(reTd);
+
       tb2.appendChild(tr);
     });
     t2.appendChild(tb2);
@@ -1433,7 +1473,7 @@ function renderSnapReconcileTab(rows, drRows) {
   }
 }
 
-function renderSnapDiffTab(currentRows, prevRows, prevYm) {
+function renderSnapDiffTab(currentRows, prevRows, prevYm, currentDrRows, prevDrRows) {
   const el = $('snap-tab-diff');
   if (!prevRows.length) {
     const [py, pm] = (prevYm || '').split('-');
@@ -1531,6 +1571,79 @@ function renderSnapDiffTab(currentRows, prevRows, prevYm) {
   t.appendChild(tb);
   el.innerHTML = '';
   el.appendChild(t);
+
+  // ── DR差分セクション ──
+  if (currentDrRows && currentDrRows.length) {
+    const h2 = document.createElement('div');
+    h2.style.cssText = 'padding:1rem 0 0.3rem;font-family:var(--font-mono);font-size:0.67rem;color:var(--info);letter-spacing:0.1em;border-top:1px solid var(--border);margin-top:1rem;';
+
+    const drDiffs = [];
+    const prevDrMap = {};
+    (prevDrRows || []).forEach(r => { prevDrMap[r.person_key] = r; });
+
+    for (const r of currentDrRows) {
+      const prev = prevDrMap[r.person_key];
+      if (!prev) {
+        drDiffs.push({ name: r.person_name, label: '新規追加', before: '-', after: '-', severity: 'info' });
+        continue;
+      }
+      let hasChange = false;
+      // ドライバー報酬
+      if (Number(r.driver_reward) !== Number(prev.driver_reward)) {
+        drDiffs.push({ name: r.person_name, label: 'ドライバー報酬変更', before: formatYen(prev.driver_reward), after: formatYen(r.driver_reward), severity: 'alert' });
+        hasChange = true;
+      }
+      // 振込先
+      const drBankFields = [
+        { key: 'bank_name', label: '銀行名' }, { key: 'branch_name', label: '支店名' },
+        { key: 'account_type', label: '口座種別' }, { key: 'account_number', label: '口座番号' },
+        { key: 'account_holder_kana', label: '名義カナ' }
+      ];
+      for (const f of drBankFields) {
+        const cv = String(r[f.key] ?? ''), pv = String(prev[f.key] ?? '');
+        if (cv !== pv) {
+          const db = f.key === 'account_number' ? ('****' + pv.slice(-4)) : (pv || '-');
+          const da = f.key === 'account_number' ? ('****' + cv.slice(-4)) : (cv || '-');
+          drDiffs.push({ name: r.person_name, label: `振込先変更（${f.label}）`, before: db, after: da, severity: 'alert' });
+          hasChange = true;
+        }
+      }
+      if (!hasChange) drDiffs.push({ name: r.person_name, label: '変更なし', before: '-', after: '-', severity: 'ok' });
+    }
+    (prevDrRows || []).forEach(r => {
+      if (!currentDrRows.find(c => c.person_key === r.person_key))
+        drDiffs.push({ name: r.person_name, label: '削除', before: '-', after: '-', severity: 'info' });
+    });
+
+    drDiffs.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
+    const alertCount = drDiffs.filter(d => d.severity === 'alert').length;
+    h2.innerHTML = `▸ DR差分 ${currentDrRows.length}名　<span class="badge ${alertCount > 0 ? 'badge-ng' : 'badge-ok'}" style="vertical-align:middle">要確認 ${alertCount}件</span>`;
+    el.appendChild(h2);
+
+    if (!prevDrRows || !prevDrRows.length) {
+      const msg = document.createElement('div');
+      msg.style.cssText = 'padding:0.75rem;font-size:0.78rem;color:var(--text-muted);';
+      msg.textContent = '前月DRスナップショットがないため差分を表示できません。';
+      el.appendChild(msg);
+    } else {
+      const t2 = document.createElement('table');
+      t2.innerHTML = `<thead><tr><th>氏名</th><th>変更種別</th><th>変更前</th><th>変更後</th></tr></thead>`;
+      const tb2 = document.createElement('tbody');
+      drDiffs.forEach(d => {
+        const tr = document.createElement('tr');
+        if (d.severity === 'alert') tr.classList.add('snap-row-ng');
+        [d.name].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+        const labelTd = document.createElement('td');
+        const bc = d.severity === 'alert' ? 'badge-ng' : d.severity === 'info' ? 'badge-gray' : 'badge-ok';
+        labelTd.innerHTML = `<span class="badge ${bc}">${escapeHtml(d.label)}</span>`;
+        tr.appendChild(labelTd);
+        [d.before, d.after].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+        tb2.appendChild(tr);
+      });
+      t2.appendChild(tb2);
+      el.appendChild(t2);
+    }
+  }
 }
 
 // ==============================
