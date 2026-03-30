@@ -1672,27 +1672,56 @@ function escapeHtml(str) {
 // 一括インポート
 // ==============================
 function setupBulkImport() {
-  const btn        = $('btn-bulk-import');
-  const modal      = $('bulk-import-modal');
-  const closeBtn   = $('bulk-modal-close');
-  const cancelBtn  = $('btn-bulk-cancel');
-  const dropZone   = $('bulk-drop-zone');
-  const fileInput  = $('bulk-file-input');
-  const addBtn     = $('btn-bulk-add');
-  const fileInputAdd = $('bulk-file-input-add');
-  const runBtn     = $('btn-bulk-run');
+  const btn            = $('btn-bulk-import');
+  const modal          = $('bulk-import-modal');
+  const closeBtn       = $('bulk-modal-close');
+  const cancelBtn      = $('btn-bulk-cancel');
+  const dropZone       = $('bulk-drop-zone');
+  const fileInput      = $('bulk-file-input');
+  const addBtn         = $('btn-bulk-add');
+  const addFolderInput = $('bulk-file-input-add-folder');
+  const addFileInput   = $('bulk-file-input-add-file');
+  const runBtn         = $('btn-bulk-run');
+  const modeFolderBtn  = $('bulk-mode-folder');
+  const modeFileBtn    = $('bulk-mode-file');
+
+  // モード切り替え（フォルダ / ファイル）
+  let folderMode = true;
+  function setMode(isFolder) {
+    folderMode = isFolder;
+    if (isFolder) {
+      fileInput.setAttribute('webkitdirectory', '');
+      fileInput.removeAttribute('multiple');
+      $('bulk-drop-icon').className = 'fas fa-folder-open';
+      $('bulk-drop-label').textContent = 'クリックしてフォルダを選択';
+      $('bulk-drop-sub').textContent   = 'サブフォルダも含めて自動スキャンします。関係ないファイルは無視されます。';
+      modeFolderBtn.className = 'btn btn-primary';
+      modeFileBtn.className   = 'btn btn-outline';
+    } else {
+      fileInput.removeAttribute('webkitdirectory');
+      fileInput.setAttribute('multiple', '');
+      $('bulk-drop-icon').className = 'fas fa-file-excel';
+      $('bulk-drop-label').textContent = 'クリックしてファイルを選択（複数可）';
+      $('bulk-drop-sub').textContent   = 'Ctrl/Shiftで複数選択できます。関係ないファイルは無視されます。';
+      modeFolderBtn.className = 'btn btn-outline';
+      modeFileBtn.className   = 'btn btn-primary';
+    }
+    fileInput.value = '';
+  }
+  modeFolderBtn.addEventListener('click', () => setMode(true));
+  modeFileBtn.addEventListener('click',   () => setMode(false));
 
   btn.addEventListener('click', () => {
     resetBulkModal();
     modal.style.display = 'flex';
   });
-  closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+  closeBtn.addEventListener('click',  () => { modal.style.display = 'none'; });
   cancelBtn.addEventListener('click', () => { modal.style.display = 'none'; });
   modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
 
-  // 初回フォルダ選択
+  // 初回選択
   dropZone.addEventListener('click', () => fileInput.click());
-  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--primary)'; });
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.style.borderColor = 'var(--primary)'; });
   dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--border)'; });
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
@@ -1704,11 +1733,19 @@ function setupBulkImport() {
     fileInput.value = '';
   });
 
-  // 追加フォルダ選択
-  addBtn.addEventListener('click', () => fileInputAdd.click());
-  fileInputAdd.addEventListener('change', e => {
-    handleBulkFiles(Array.from(e.target.files), true); // merge=true
-    fileInputAdd.value = '';
+  // 追加選択（フォルダ or ファイル）
+  addBtn.addEventListener('click', () => {
+    // 現在のモードに合わせて選択
+    if (folderMode) addFolderInput.click();
+    else            addFileInput.click();
+  });
+  addFolderInput.addEventListener('change', e => {
+    handleBulkFiles(Array.from(e.target.files), true);
+    addFolderInput.value = '';
+  });
+  addFileInput.addEventListener('change', e => {
+    handleBulkFiles(Array.from(e.target.files), true);
+    addFileInput.value = '';
   });
 
   runBtn.addEventListener('click', runBulkImport);

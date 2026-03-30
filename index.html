@@ -338,12 +338,20 @@
       </div>
       <div class="snap-modal-body" style="padding:1rem">
 
-        <!-- ドロップゾーン -->
-        <div id="bulk-drop-zone" style="border:2px dashed var(--border);border-radius:8px;padding:2rem;text-align:center;cursor:pointer;margin-bottom:1rem;transition:border-color .2s">
+        <!-- 選択モード切り替え＋ドロップゾーン -->
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
+          <button id="bulk-mode-folder" class="btn btn-primary" style="font-size:0.78rem;flex:1">
+            <i class="fas fa-folder-open"></i> フォルダ選択
+          </button>
+          <button id="bulk-mode-file" class="btn btn-outline" style="font-size:0.78rem;flex:1">
+            <i class="fas fa-file-excel"></i> ファイル選択
+          </button>
+        </div>
+        <div id="bulk-drop-zone" style="border:2px dashed var(--border);border-radius:8px;padding:1.5rem;text-align:center;cursor:pointer;margin-bottom:1rem;transition:border-color .2s">
           <input type="file" id="bulk-file-input" multiple webkitdirectory accept=".xlsx,.xls" style="display:none">
-          <i class="fas fa-folder-open" style="font-size:2rem;color:var(--text-muted);margin-bottom:0.5rem;display:block"></i>
-          <div style="font-family:var(--font-mono);font-size:0.8rem;color:var(--text-muted)">クリックしてフォルダを選択</div>
-          <div style="font-size:0.72rem;color:var(--gray-400);margin-top:0.25rem">サブフォルダも含めて自動スキャンします。関係ないファイルは無視されます。</div>
+          <i id="bulk-drop-icon" class="fas fa-folder-open" style="font-size:2rem;color:var(--text-muted);margin-bottom:0.5rem;display:block"></i>
+          <div id="bulk-drop-label" style="font-family:var(--font-mono);font-size:0.8rem;color:var(--text-muted)">クリックしてフォルダを選択</div>
+          <div id="bulk-drop-sub" style="font-size:0.72rem;color:var(--gray-400);margin-top:0.25rem">サブフォルダも含めて自動スキャンします。関係ないファイルは無視されます。</div>
         </div>
 
         <!-- 分類結果リスト -->
@@ -354,7 +362,8 @@
               <i class="fas fa-plus"></i> フォルダを追加
             </button>
           </div>
-          <input type="file" id="bulk-file-input-add" multiple webkitdirectory accept=".xlsx,.xls" style="display:none">
+          <input type="file" id="bulk-file-input-add-folder" multiple webkitdirectory accept=".xlsx,.xls" style="display:none">
+          <input type="file" id="bulk-file-input-add-file"   multiple accept=".xlsx,.xls" style="display:none">
           <div id="bulk-file-table"></div>
           <div id="bulk-ignored-count" style="font-size:0.72rem;color:var(--gray-400);margin-top:0.4rem;padding-left:0.25rem"></div>
         </div>
