@@ -506,18 +506,31 @@ function extractCompanyAndDate(ws) {
       const v = getCellValue(ws, r, c);
       if (!v) continue;
       const s = String(v).trim();
-      // 会社名: 株式会社・有限会社・合同会社・合名会社・合資会社 を含む
+
+      // 会社名: 株式会社・有限会社・合同会社 等を含む（前後どちらでもOK）
       if (!companyName && /株式会社|有限会社|合同会社|合名会社|合資会社/.test(s)) {
         companyName = s;
       }
-      // 日付: セルが日付型 または 「年」を含む文字列
-      if (!invoiceDate) {
-        const cell = ws[XLSX.utils.encode_cell({ r, c })];
-        if (cell && cell.t === 'd') {
+
+      // 日付: セルが日付型
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (!invoiceDate && cell) {
+        if (cell.t === 'd') {
           const d = new Date(cell.v);
           invoiceDate = `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
-        } else if (typeof s === 'string' && /\d{4}年\d{1,2}月/.test(s)) {
-          invoiceDate = s;
+        } else if (typeof s === 'string') {
+          // 「2024年12月」「2024/12/31」「12/31/24」「R6.12.31」など
+          let m;
+          if ((m = s.match(/(\d{4})[年\/\-](\d{1,2})/))) {
+            invoiceDate = `${m[1]}/${m[2].padStart(2,'0')}`;
+          } else if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/))) {
+            // MM/DD/YY or MM/DD/YYYY
+            const yr = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+            invoiceDate = `${yr}/${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}`;
+          } else if ((m = s.match(/R(\d+)[\.\-\/](\d{1,2})/))) {
+            // 令和
+            invoiceDate = `令和${m[1]}年${m[2]}月`;
+          }
         }
       }
     }
