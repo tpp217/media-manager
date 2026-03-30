@@ -1672,13 +1672,15 @@ function escapeHtml(str) {
 // 一括インポート
 // ==============================
 function setupBulkImport() {
-  const btn      = $('btn-bulk-import');
-  const modal    = $('bulk-import-modal');
-  const closeBtn = $('bulk-modal-close');
-  const cancelBtn= $('btn-bulk-cancel');
-  const dropZone = $('bulk-drop-zone');
-  const fileInput= $('bulk-file-input');
-  const runBtn   = $('btn-bulk-run');
+  const btn        = $('btn-bulk-import');
+  const modal      = $('bulk-import-modal');
+  const closeBtn   = $('bulk-modal-close');
+  const cancelBtn  = $('btn-bulk-cancel');
+  const dropZone   = $('bulk-drop-zone');
+  const fileInput  = $('bulk-file-input');
+  const addBtn     = $('btn-bulk-add');
+  const fileInputAdd = $('bulk-file-input-add');
+  const runBtn     = $('btn-bulk-run');
 
   btn.addEventListener('click', () => {
     resetBulkModal();
@@ -1688,16 +1690,26 @@ function setupBulkImport() {
   cancelBtn.addEventListener('click', () => { modal.style.display = 'none'; });
   modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
 
-  // クリックでファイル選択
+  // 初回フォルダ選択
   dropZone.addEventListener('click', () => fileInput.click());
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--primary)'; });
   dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--border)'; });
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.style.borderColor = 'var(--border)';
-    handleBulkFiles(Array.from(e.dataTransfer.files));
+    handleBulkFiles(Array.from(e.dataTransfer.files), false);
   });
-  fileInput.addEventListener('change', e => handleBulkFiles(Array.from(e.target.files)));
+  fileInput.addEventListener('change', e => {
+    handleBulkFiles(Array.from(e.target.files), false);
+    fileInput.value = '';
+  });
+
+  // 追加フォルダ選択
+  addBtn.addEventListener('click', () => fileInputAdd.click());
+  fileInputAdd.addEventListener('change', e => {
+    handleBulkFiles(Array.from(e.target.files), true); // merge=true
+    fileInputAdd.value = '';
+  });
 
   runBtn.addEventListener('click', runBulkImport);
 }
@@ -1712,27 +1724,26 @@ function resetBulkModal() {
   $('btn-bulk-run').disabled         = true;
   $('bulk-drop-zone').style.display  = 'block';
   $('bulk-file-input').value         = '';
-  window._bulkSets = [];
+  window._bulkSets   = [];
+  window._bulkMap    = {};
+  window._bulkIgnored = 0;
 }
 
-function handleBulkFiles(files) {
-  const map = {};
-  let ignoredCount = 0;
+function handleBulkFiles(files, merge = false) {
+  // merge=true のときは既存マップに追加、false のときはリセット
+  const map = merge ? (window._bulkMap || {}) : {};
+  let ignoredCount = merge ? (window._bulkIgnored || 0) : 0;
 
   for (const f of files) {
     const name = f.name;
-    // xlsx/xls以外は無視
     if (!/\.(xlsx|xls)$/i.test(name)) continue;
 
     const { storeName, periodYm } = parseFileNameInfo(name);
-    // 店舗名・年月が取れないファイルは無視
     if (!storeName || !periodYm) { ignoredCount++; continue; }
 
-    // 種別判定
     const isReport  = /業務報告書/.test(name);
     const isMonthly = /月計表|内勤請求/.test(name);
     const isDR      = /DR/.test(name);
-    // どの種別にも該当しない場合は無視
     if (!isReport && !isMonthly && !isDR) { ignoredCount++; continue; }
 
     const key = `${storeName}__${periodYm}`;
@@ -1742,9 +1753,15 @@ function handleBulkFiles(files) {
     if (isDR)      map[key].dr      = f;
   }
 
+  window._bulkMap    = map;
+  window._bulkIgnored = ignoredCount;
+
   // 古い月から順にソート
   const sets = Object.values(map).sort((a, b) => a.periodYm.localeCompare(b.periodYm));
   window._bulkSets = sets;
+
+  // ドロップゾーンを隠して一覧を表示
+  $('bulk-drop-zone').style.display = 'none';
 
   // テーブル表示
   const tableEl = $('bulk-file-table');
@@ -1753,9 +1770,9 @@ function handleBulkFiles(files) {
     $('btn-bulk-run').disabled = true;
   } else {
     const rows = sets.map(s => {
-      const rOk = s.report  ? `<span class="badge badge-ok">${escapeHtml(s.report.name)}</span>`  : '<span class="badge badge-ng">なし</span>';
-      const mOk = s.monthly ? `<span class="badge badge-ok">${escapeHtml(s.monthly.name)}</span>` : '<span class="badge badge-ng">なし</span>';
-      const dOk = s.dr      ? `<span class="badge badge-info">${escapeHtml(s.dr.name)}</span>`    : '<span class="badge badge-gray">なし</span>';
+      const rOk = s.report  ? `<span class="badge badge-ok" title="${escapeHtml(s.report.name)}">✓ あり</span>`  : '<span class="badge badge-ng">なし</span>';
+      const mOk = s.monthly ? `<span class="badge badge-ok" title="${escapeHtml(s.monthly.name)}">✓ あり</span>` : '<span class="badge badge-ng">なし</span>';
+      const dOk = s.dr      ? `<span class="badge badge-info" title="${escapeHtml(s.dr.name)}">✓ あり</span>`    : '<span class="badge badge-gray">なし</span>';
       const canRun = s.report && s.monthly;
       return `<tr style="${canRun ? '' : 'opacity:.5'}">
         <td style="padding:4px 8px;font-weight:700">${escapeHtml(s.storeName)}</td>
@@ -1763,7 +1780,7 @@ function handleBulkFiles(files) {
         <td style="padding:4px 8px">${rOk}</td>
         <td style="padding:4px 8px">${mOk}</td>
         <td style="padding:4px 8px">${dOk}</td>
-        <td style="padding:4px 8px">${canRun ? '<span class="badge badge-ok">処理可</span>' : '<span class="badge badge-warn"><i class="fas fa-forward"></i> スキップ（業務報告書または月計表なし）</span>'}</td>
+        <td style="padding:4px 8px">${canRun ? '<span class="badge badge-ok">処理可</span>' : '<span class="badge badge-warn"><i class="fas fa-forward"></i> スキップ</span>'}</td>
       </tr>`;
     }).join('');
     tableEl.innerHTML = `

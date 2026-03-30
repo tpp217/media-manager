@@ -348,13 +348,19 @@
 
         <!-- 分類結果リスト -->
         <div id="bulk-file-list" style="display:none;margin-bottom:1rem">
-          <div style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem">▸ 検出されたファイルセット</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
+            <div style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">▸ 検出されたファイルセット</div>
+            <button id="btn-bulk-add" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.6rem;">
+              <i class="fas fa-plus"></i> フォルダを追加
+            </button>
+          </div>
+          <input type="file" id="bulk-file-input-add" multiple webkitdirectory accept=".xlsx,.xls" style="display:none">
           <div id="bulk-file-table"></div>
           <div id="bulk-ignored-count" style="font-size:0.72rem;color:var(--gray-400);margin-top:0.4rem;padding-left:0.25rem"></div>
         </div>
 
         <!-- 実行ボタン -->
-        <div id="bulk-actions" style="display:none;display:flex;gap:0.5rem;justify-content:flex-end">
+        <div id="bulk-actions" style="display:none;gap:0.5rem;justify-content:flex-end">
           <button id="btn-bulk-cancel" class="btn btn-outline">キャンセル</button>
           <button id="btn-bulk-run" class="btn btn-primary" disabled>
             <i class="fas fa-play"></i> インポート実行
