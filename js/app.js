@@ -52,8 +52,9 @@ document.addEventListener('DOMContentLoaded', () => {
   setupStep5();
   setupReset();
   setupTabs();
-  setupSnapshotModal(); // モーダルのイベント設定
-  loadSnapshotList();   // 起動時にスナップショット一覧を表示
+  setupSnapshotModal();
+  setupBulkImport();
+  loadSnapshotList();
 });
 
 // ==============================
@@ -1665,4 +1666,250 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// ==============================
+// 一括インポート
+// ==============================
+function setupBulkImport() {
+  const btn            = $('btn-bulk-import');
+  const modal          = $('bulk-import-modal');
+  const closeBtn       = $('bulk-modal-close');
+  const cancelBtn      = $('btn-bulk-cancel');
+  const dropZone       = $('bulk-drop-zone');
+  const fileInput      = $('bulk-file-input');
+  const addBtn         = $('btn-bulk-add');
+  const addFolderInput = $('bulk-file-input-add-folder');
+  const addFileInput   = $('bulk-file-input-add-file');
+  const runBtn         = $('btn-bulk-run');
+  const modeFolderBtn  = $('bulk-mode-folder');
+  const modeFileBtn    = $('bulk-mode-file');
+
+  // モード切り替え（フォルダ / ファイル）
+  let folderMode = true;
+  function setMode(isFolder) {
+    folderMode = isFolder;
+    if (isFolder) {
+      fileInput.setAttribute('webkitdirectory', '');
+      fileInput.removeAttribute('multiple');
+      $('bulk-drop-icon').className = 'fas fa-folder-open';
+      $('bulk-drop-label').textContent = 'クリックしてフォルダを選択';
+      $('bulk-drop-sub').textContent   = 'サブフォルダも含めて自動スキャンします。関係ないファイルは無視されます。';
+      modeFolderBtn.className = 'btn btn-primary';
+      modeFileBtn.className   = 'btn btn-outline';
+    } else {
+      fileInput.removeAttribute('webkitdirectory');
+      fileInput.setAttribute('multiple', '');
+      $('bulk-drop-icon').className = 'fas fa-file-excel';
+      $('bulk-drop-label').textContent = 'クリックしてファイルを選択（複数可）';
+      $('bulk-drop-sub').textContent   = 'Ctrl/Shiftで複数選択できます。関係ないファイルは無視されます。';
+      modeFolderBtn.className = 'btn btn-outline';
+      modeFileBtn.className   = 'btn btn-primary';
+    }
+    fileInput.value = '';
+  }
+  modeFolderBtn.addEventListener('click', () => setMode(true));
+  modeFileBtn.addEventListener('click',   () => setMode(false));
+
+  btn.addEventListener('click', () => {
+    resetBulkModal();
+    modal.style.display = 'flex';
+  });
+  closeBtn.addEventListener('click',  () => { modal.style.display = 'none'; });
+  cancelBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+  modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+
+  // 初回選択
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.style.borderColor = 'var(--primary)'; });
+  dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--border)'; });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--border)';
+    handleBulkFiles(Array.from(e.dataTransfer.files), false);
+  });
+  fileInput.addEventListener('change', e => {
+    handleBulkFiles(Array.from(e.target.files), false);
+    fileInput.value = '';
+  });
+
+  // 追加選択（フォルダ or ファイル）
+  addBtn.addEventListener('click', () => {
+    // 現在のモードに合わせて選択
+    if (folderMode) addFolderInput.click();
+    else            addFileInput.click();
+  });
+  addFolderInput.addEventListener('change', e => {
+    handleBulkFiles(Array.from(e.target.files), true);
+    addFolderInput.value = '';
+  });
+  addFileInput.addEventListener('change', e => {
+    handleBulkFiles(Array.from(e.target.files), true);
+    addFileInput.value = '';
+  });
+
+  runBtn.addEventListener('click', runBulkImport);
+}
+
+function resetBulkModal() {
+  $('bulk-file-list').style.display  = 'none';
+  $('bulk-actions').style.display    = 'none';
+  $('bulk-progress').style.display   = 'none';
+  $('bulk-file-table').innerHTML     = '';
+  $('bulk-progress-log').innerHTML   = '';
+  $('bulk-progress-bar').style.width = '0%';
+  $('btn-bulk-run').disabled         = true;
+  $('bulk-drop-zone').style.display  = 'block';
+  $('bulk-file-input').value         = '';
+  window._bulkSets   = [];
+  window._bulkMap    = {};
+  window._bulkIgnored = 0;
+}
+
+function handleBulkFiles(files, merge = false) {
+  // merge=true のときは既存マップに追加、false のときはリセット
+  const map = merge ? (window._bulkMap || {}) : {};
+  let ignoredCount = merge ? (window._bulkIgnored || 0) : 0;
+
+  for (const f of files) {
+    const name = f.name;
+    if (!/\.(xlsx|xls)$/i.test(name)) continue;
+
+    const { storeName, periodYm } = parseFileNameInfo(name);
+    if (!storeName || !periodYm) { ignoredCount++; continue; }
+
+    const isReport  = /業務報告書/.test(name);
+    const isMonthly = /月計表|内勤請求/.test(name);
+    const isDR      = /DR/.test(name);
+    if (!isReport && !isMonthly && !isDR) { ignoredCount++; continue; }
+
+    const key = `${storeName}__${periodYm}`;
+    if (!map[key]) map[key] = { storeName, periodYm, report: null, monthly: null, dr: null };
+    if (isReport)  map[key].report  = f;
+    if (isMonthly) map[key].monthly = f;
+    if (isDR)      map[key].dr      = f;
+  }
+
+  window._bulkMap    = map;
+  window._bulkIgnored = ignoredCount;
+
+  // 古い月から順にソート
+  const sets = Object.values(map).sort((a, b) => a.periodYm.localeCompare(b.periodYm));
+  window._bulkSets = sets;
+
+  // ドロップゾーンを隠して一覧を表示
+  $('bulk-drop-zone').style.display = 'none';
+
+  // テーブル表示
+  const tableEl = $('bulk-file-table');
+  if (sets.length === 0) {
+    tableEl.innerHTML = '<div style="padding:0.5rem;font-size:0.8rem;color:var(--danger)">認識できるファイルが見つかりませんでした。ファイル名に【店舗名】と年月が含まれているか確認してください。</div>';
+    $('btn-bulk-run').disabled = true;
+  } else {
+    const rows = sets.map(s => {
+      const rOk = s.report  ? `<span class="badge badge-ok" title="${escapeHtml(s.report.name)}">✓ あり</span>`  : '<span class="badge badge-ng">なし</span>';
+      const mOk = s.monthly ? `<span class="badge badge-ok" title="${escapeHtml(s.monthly.name)}">✓ あり</span>` : '<span class="badge badge-ng">なし</span>';
+      const dOk = s.dr      ? `<span class="badge badge-info" title="${escapeHtml(s.dr.name)}">✓ あり</span>`    : '<span class="badge badge-gray">なし</span>';
+      const canRun = s.report && s.monthly;
+      return `<tr style="${canRun ? '' : 'opacity:.5'}">
+        <td style="padding:4px 8px;font-weight:700">${escapeHtml(s.storeName)}</td>
+        <td style="padding:4px 8px">${s.periodYm.replace('-','年').replace(/(\d{2})$/,m=>parseInt(m)+'月')}</td>
+        <td style="padding:4px 8px">${rOk}</td>
+        <td style="padding:4px 8px">${mOk}</td>
+        <td style="padding:4px 8px">${dOk}</td>
+        <td style="padding:4px 8px">${canRun ? '<span class="badge badge-ok">処理可</span>' : '<span class="badge badge-warn"><i class="fas fa-forward"></i> スキップ</span>'}</td>
+      </tr>`;
+    }).join('');
+    tableEl.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:0.78rem">
+        <thead><tr style="background:var(--gray-50)">
+          <th style="padding:4px 8px;text-align:left">店舗</th>
+          <th style="padding:4px 8px;text-align:left">年月</th>
+          <th style="padding:4px 8px;text-align:left">業務報告書</th>
+          <th style="padding:4px 8px;text-align:left">月計表</th>
+          <th style="padding:4px 8px;text-align:left">DR</th>
+          <th style="padding:4px 8px;text-align:left">状態</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    const runnable = sets.filter(s => s.report && s.monthly).length;
+    const skipped  = sets.filter(s => !s.report || !s.monthly).length;
+    $('btn-bulk-run').disabled = runnable === 0;
+    $('btn-bulk-run').innerHTML = `<i class="fas fa-play"></i> 処理実行（${runnable}件${skipped > 0 ? `・${skipped}件スキップ` : ''}）`;
+  }
+
+  // 無視ファイル数を表示
+  const ignoredEl = $('bulk-ignored-count');
+  if (ignoredEl) ignoredEl.textContent = ignoredCount > 0 ? `※ 認識できなかったファイル ${ignoredCount}件は無視しました` : '';
+
+  $('bulk-file-list').style.display = 'block';
+  $('bulk-actions').style.display   = 'flex';
+}
+
+async function runBulkImport() {
+  const sets = (window._bulkSets || []).filter(s => s.report && s.monthly);
+  if (!sets.length) return;
+
+  $('bulk-drop-zone').style.display = 'none';
+  $('bulk-file-list').style.display = 'none';
+  $('bulk-actions').style.display   = 'none';
+  $('bulk-progress').style.display  = 'block';
+
+  const logEl = $('bulk-progress-log');
+  const barEl = $('bulk-progress-bar');
+
+  function log(msg, type = 'info') {
+    const colors = { info: 'var(--text-muted)', ok: 'var(--success)', error: 'var(--danger)', warn: 'var(--warning)' };
+    const line = document.createElement('div');
+    line.style.color = colors[type] || colors.info;
+    line.style.padding = '1px 0';
+    line.textContent = msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  let done = 0;
+  for (const s of sets) {
+    log(`[${s.storeName} ${s.periodYm}] 処理開始...`);
+    try {
+      const reportBuf  = await readFileAsArrayBuffer(s.report);
+      const monthlyBuf = await readFileAsArrayBuffer(s.monthly);
+      const drBuf      = s.dr ? await readFileAsArrayBuffer(s.dr) : null;
+
+      // パース
+      const { contractors: allPeople } = await parseReport(reportBuf);
+      const contractors = allPeople.filter(c => (c.role || '').includes('業務委託'));
+      const { dailyPayEntries } = await parseMonthly(monthlyBuf);
+
+      // 突合
+      const reconcileResults = reconcile(allPeople, dailyPayEntries);
+      let drList = [], drReconcileResults = [];
+      if (drBuf) {
+        const drParsed = await parseDR(drBuf);
+        drList = drParsed.drList;
+        drReconcileResults = reconcileDR(drList, dailyPayEntries);
+      }
+
+      // スナップショット保存
+      await saveSnapshot(allPeople, s.storeName, s.periodYm, reconcileResults);
+      if (drList.length) await saveDRSnapshot(drList, s.storeName, s.periodYm, drReconcileResults);
+
+      log(`[${s.storeName} ${s.periodYm}] ✅ 完了（委託者${contractors.length}名${drList.length ? `、DR${drList.length}名` : ''}）`, 'ok');
+    } catch (e) {
+      log(`[${s.storeName} ${s.periodYm}] ❌ エラー: ${e.message}`, 'error');
+    }
+    done++;
+    barEl.style.width = Math.round(done / sets.length * 100) + '%';
+  }
+
+  log(`─── 完了: ${done}件処理しました ───`, 'ok');
+  await loadSnapshotList();
+
+  // 閉じるボタンを追加
+  const closeBtn2 = document.createElement('button');
+  closeBtn2.className = 'btn btn-primary';
+  closeBtn2.style.cssText = 'margin-top:1rem;width:100%';
+  closeBtn2.textContent = '閉じる';
+  closeBtn2.addEventListener('click', () => { $('bulk-import-modal').style.display = 'none'; });
+  $('bulk-progress').appendChild(closeBtn2);
 }
