@@ -168,7 +168,8 @@ async function runStep2() {
     // デバッグ用ログ（開発者ツールで確認可能）
     console.log('[Step2] 全員:', JSON.stringify(allPeople.map(c => ({
       name: c.name, role: c.role,
-      basicPayMan: c.basicPayMan, dailyPayYen: c.dailyPayYen
+      basicPayMan: c.basicPayMan, dailyPayYen: c.dailyPayYen,
+      companyName: c.companyName, invoiceDate: c.invoiceDate
     })), null, 2));
     if (warnings.length) console.warn('[Step2] 警告:', warnings);
 
