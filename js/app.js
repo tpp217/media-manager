@@ -55,6 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupSnapshotModal();
   setupBulkImport();
   loadSnapshotList();
+  initOrganizerModal();
 });
 
 // ==============================
@@ -1974,4 +1975,221 @@ async function runBulkImport() {
   closeBtn2.textContent = '閉じる';
   closeBtn2.addEventListener('click', () => { $('bulk-import-modal').style.display = 'none'; });
   $('bulk-progress').appendChild(closeBtn2);
+}
+
+// ============================================================
+// フォルダ整理機能
+// ============================================================
+
+// 仕分けルール: キーワード → フォルダ名（コピー対象）
+const ORGANIZER_RULES = [
+  { keyword: '業務報告書', folder: '業務報告書' },
+  { keyword: '各種統計',   folder: '各種統計'   },
+  { keyword: '店舗データ', folder: '店舗データ' },
+];
+// DR請求書フォルダは必ず作成（ファイル振り分けなし）
+const ORGANIZER_EMPTY_FOLDERS = ['DR請求書'];
+
+let _organizerFiles = []; // File オブジェクトの配列
+
+function initOrganizerModal() {
+  const openBtn   = $('btn-folder-organizer');
+  const modal     = $('organizer-modal');
+  const closeBtn  = $('organizer-modal-close');
+  const dropZone  = $('organizer-drop-zone');
+  const fileInput = $('organizer-file-input');
+  const runBtn    = $('btn-organizer-run');
+  const cancelBtn = $('btn-organizer-cancel');
+
+  if (!openBtn) return;
+
+  openBtn.addEventListener('click', () => {
+    resetOrganizerModal();
+    modal.style.display = 'flex';
+  });
+  closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+  cancelBtn.addEventListener('click', () => { resetOrganizerModal(); });
+  modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+
+  // クリックでファイル選択
+  dropZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => handleOrganizerFiles(Array.from(e.target.files)));
+
+  // ドラッグ＆ドロップ
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--neon)'; });
+  dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--border)'; });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--border)';
+    const files = Array.from(e.dataTransfer.files);
+    handleOrganizerFiles(files);
+  });
+
+  runBtn.addEventListener('click', runOrganizerProcess);
+}
+
+function resetOrganizerModal() {
+  _organizerFiles = [];
+  $('organizer-drop-zone').style.display = 'block';
+  $('organizer-file-list').style.display = 'none';
+  $('organizer-progress').style.display  = 'none';
+  $('organizer-actions').style.display   = 'none';
+  $('organizer-file-table').innerHTML    = '';
+  $('organizer-progress-bar').style.width = '0%';
+  $('organizer-progress-log').innerHTML  = '';
+  $('organizer-file-input').value        = '';
+  $('btn-organizer-run').disabled        = true;
+}
+
+function handleOrganizerFiles(files) {
+  _organizerFiles = files.filter(f => {
+    const ext = f.name.split('.').pop().toLowerCase();
+    return ['zip','xls','xlsx','xlsm'].includes(ext);
+  });
+
+  if (_organizerFiles.length === 0) {
+    showToast('対応ファイルが見つかりませんでした（ZIP・Excel）', 'warn');
+    return;
+  }
+
+  // ファイル一覧表示
+  const rows = _organizerFiles.map(f => {
+    const ext = f.name.split('.').pop().toLowerCase();
+    const isZip = ext === 'zip';
+    const icon = isZip ? '🗜️' : '📊';
+    const tag  = isZip
+      ? '<span class="badge badge-info">ZIP（展開）</span>'
+      : getOrganizerTag(f.name);
+    return `<tr>
+      <td style="padding:4px 8px">${icon} ${escapeHtml(f.name)}</td>
+      <td style="padding:4px 8px">${(f.size/1024).toFixed(1)} KB</td>
+      <td style="padding:4px 8px">${tag}</td>
+    </tr>`;
+  }).join('');
+
+  $('organizer-file-table').innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:0.78rem">
+      <thead><tr style="background:var(--gray-50)">
+        <th style="padding:4px 8px;text-align:left">ファイル名</th>
+        <th style="padding:4px 8px;text-align:left">サイズ</th>
+        <th style="padding:4px 8px;text-align:left">仕分け先</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  $('organizer-drop-zone').style.display  = 'none';
+  $('organizer-file-list').style.display  = 'block';
+  $('organizer-actions').style.display    = 'flex';
+  $('btn-organizer-run').disabled         = false;
+}
+
+function getOrganizerTag(filename) {
+  for (const rule of ORGANIZER_RULES) {
+    if (filename.includes(rule.keyword)) {
+      return `<span class="badge badge-ok">📁 ${escapeHtml(rule.folder)}/</span>`;
+    }
+  }
+  return '<span class="badge badge-gray">仕分けなし</span>';
+}
+
+async function runOrganizerProcess() {
+  $('organizer-file-list').style.display  = 'none';
+  $('organizer-actions').style.display    = 'none';
+  $('organizer-progress').style.display   = 'block';
+
+  const logEl = $('organizer-progress-log');
+  const barEl = $('organizer-progress-bar');
+
+  function log(msg) {
+    logEl.innerHTML += msg + '<br>';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // 仕分け済みファイルを格納するマップ: パス → ArrayBuffer
+  const outputFiles = {};
+
+  // DR請求書フォルダを必ず作成（.gitkeep相当の空ファイル）
+  for (const folder of ORGANIZER_EMPTY_FOLDERS) {
+    outputFiles[`${folder}/.keep`] = new ArrayBuffer(0);
+  }
+
+  const total = _organizerFiles.length;
+  let done = 0;
+
+  for (const file of _organizerFiles) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    barEl.style.width = `${Math.round((done / total) * 80)}%`;
+
+    if (ext === 'zip') {
+      // ZIPを展開してExcelを仕分け
+      log(`📦 ZIP展開中: ${escapeHtml(file.name)}`);
+      try {
+        const zip = await JSZip.loadAsync(file);
+        for (const [path, zipEntry] of Object.entries(zip.files)) {
+          if (zipEntry.dir) continue;
+          const fname = path.split('/').pop();
+          const fext  = fname.split('.').pop().toLowerCase();
+          if (!['xls','xlsx','xlsm'].includes(fext)) continue;
+
+          const buf = await zipEntry.async('arraybuffer');
+          const dest = getOrganizerDest(fname);
+          if (dest) {
+            outputFiles[`${dest}/${fname}`] = buf;
+            log(`  ✓ ${escapeHtml(fname)} → ${dest}/`);
+          } else {
+            log(`  - ${escapeHtml(fname)} （仕分けなし・スキップ）`);
+          }
+        }
+      } catch(e) {
+        log(`  ⚠️ ZIPの読み込みに失敗: ${e.message}`);
+      }
+    } else {
+      // 直接Excelファイル
+      const dest = getOrganizerDest(file.name);
+      if (dest) {
+        const buf = await file.arrayBuffer();
+        outputFiles[`${dest}/${file.name}`] = buf;
+        log(`✓ ${escapeHtml(file.name)} → ${dest}/`);
+      } else {
+        log(`- ${escapeHtml(file.name)} （仕分けなし・スキップ）`);
+      }
+    }
+    done++;
+  }
+
+  barEl.style.width = '90%';
+  log('📦 ZIPを作成中...');
+
+  // 出力ZIPを生成
+  const outZip = new JSZip();
+  for (const [path, buf] of Object.entries(outputFiles)) {
+    outZip.file(path, buf);
+  }
+
+  const blob = await outZip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  barEl.style.width = '100%';
+  log('✅ 完了！');
+
+  // ダウンロード
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `整理済み締め書類_${dateStr}.zip`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+
+  showToast('「整理済み締め書類」のダウンロードを開始しました', 'success');
+
+  setTimeout(() => {
+    $('organizer-modal').style.display = 'none';
+    resetOrganizerModal();
+  }, 2000);
+}
+
+function getOrganizerDest(filename) {
+  for (const rule of ORGANIZER_RULES) {
+    if (filename.includes(rule.keyword)) return rule.folder;
+  }
+  return null;
 }
