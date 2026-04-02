@@ -1987,6 +1987,8 @@ const ORGANIZER_RULES = [
   { keyword: '各種統計',   folder: '各種統計'   },
   { keyword: '店舗データ', folder: '店舗データ' },
 ];
+// DR請求書フォルダは完全に空で作成（JSZipは空フォルダをサポートしないためダミーは使わない）
+// → generateAsync後に空フォルダとして追加する方法を使用
 const ORGANIZER_EMPTY_FOLDERS = ['DR請求書'];
 
 let _organizerAllFiles = []; // フォルダ選択で取得した全Fileオブジェクト
@@ -2082,9 +2084,10 @@ async function runOrganizerProcess() {
 
   const outputFiles = {};
 
-  // DR請求書フォルダを必ず作成
+  // DR請求書フォルダ：JSZipでは空フォルダをフォルダオブジェクトとして追加
+  const outZip = new JSZip();
   for (const folder of ORGANIZER_EMPTY_FOLDERS) {
-    outputFiles[`${folder}/.keep`] = new ArrayBuffer(0);
+    outZip.folder(folder); // 空フォルダとして登録
   }
 
   const total = _organizerAllFiles.length;
@@ -2098,9 +2101,12 @@ async function runOrganizerProcess() {
       log(`📦 ZIP展開中: ${escapeHtml(file.name)}`);
       try {
         const zip = await JSZip.loadAsync(file);
-        for (const [path, zipEntry] of Object.entries(zip.files)) {
+        const entries = Object.entries(zip.files);
+        log(`  → ${entries.filter(([,e]) => !e.dir).length} ファイル検出`);
+        for (const [path, zipEntry] of entries) {
           if (zipEntry.dir) continue;
           const fname = path.split('/').pop();
+          if (!fname) continue;
           const fext  = fname.split('.').pop().toLowerCase();
           if (!['xls','xlsx','xlsm'].includes(fext)) continue;
 
@@ -2114,7 +2120,7 @@ async function runOrganizerProcess() {
           }
         }
       } catch(e) {
-        log(`  ⚠️ ZIP読み込み失敗: ${escapeHtml(file.name)}`);
+        log(`  ⚠️ ZIP読み込み失敗: ${escapeHtml(file.name)} (${e.message})`);
       }
     } else {
       const dest = getOrganizerDest(file.name);
@@ -2132,7 +2138,6 @@ async function runOrganizerProcess() {
   barEl.style.width = '90%';
   log('📦 ZIPを作成中...');
 
-  const outZip = new JSZip();
   for (const [path, buf] of Object.entries(outputFiles)) {
     outZip.file(path, buf);
   }
