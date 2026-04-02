@@ -122,9 +122,43 @@ async function handleDRFile(file) {
 
 function showFileInfo(elementId, name, size) {
   const el = $(elementId);
-  el.innerHTML = `<div class="file-name"><i class="fas fa-file-excel"></i> ${name}</div>
-  <div style="font-size:0.8rem;color:var(--gray-400);margin-top:2px">${(size / 1024).toFixed(1)} KB</div>`;
+  // elementId から対応する fileKey を特定（例: report-file-info → report）
+  const keyMap = { 'report-file-info': 'report', 'monthly-file-info': 'monthly', 'dr-file-info': 'dr' };
+  const fileKey = keyMap[elementId] || '';
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
+      <div>
+        <div class="file-name"><i class="fas fa-file-excel"></i> ${name}</div>
+        <div style="font-size:0.8rem;color:var(--gray-400);margin-top:2px">${(size / 1024).toFixed(1)} KB</div>
+      </div>
+      <button onclick="clearFile('${fileKey}')" title="削除" style="background:none;border:none;cursor:pointer;color:var(--danger);font-size:1.1rem;padding:0.2rem 0.4rem" aria-label="ファイルを削除">
+        <i class="fas fa-times-circle"></i>
+      </button>
+    </div>`;
   show(el);
+}
+
+function clearFile(fileKey) {
+  const infoId = { report: 'report-file-info', monthly: 'monthly-file-info', dr: 'dr-file-info' }[fileKey];
+  const inputId = { report: 'input-report', monthly: 'input-monthly', dr: 'input-dr' }[fileKey];
+  if (!infoId) return;
+  // AppState をクリア
+  if (fileKey === 'report')  { AppState.reportFile  = null; AppState.reportBuffer  = null; }
+  if (fileKey === 'monthly') { AppState.monthlyFile = null; AppState.monthlyBuffer = null; }
+  if (fileKey === 'dr')      { AppState.drFile      = null; AppState.drBuffer      = null; }
+  // ファイル情報エリアを非表示
+  const el = $(infoId);
+  if (el) { el.innerHTML = ''; hide(el); }
+  // input をリセット
+  const inp = $(inputId);
+  if (inp) inp.value = '';
+  // DR削除時は検出エリアのDR行も非表示
+  if (fileKey === 'dr') {
+    const drItem = $('detected-dr-item');
+    if (drItem) drItem.style.display = 'none';
+  }
+  updateStep1UI();
+  showToast('ファイルを削除しました', 'info');
 }
 
 function tryAutoDetect() {
@@ -758,15 +792,18 @@ function setupStep5() {
   $('btn-step5-back').addEventListener('click', () => goToStep(4));
   $('btn-step5-download').addEventListener('click', handleDownload);
   $('btn-step5-dr-download').addEventListener('click', handleDRDownload);
+  $('btn-step5-bulk-download').addEventListener('click', handleBulkDownload);
   $('btn-step5-restart').addEventListener('click', () => goToStep(1));
 }
 
 function runStep5() {
-  // DRファイルがある場合のみDRダウンロードボタンを表示
+  // DRファイルがある場合のみDRダウンロード・一括ダウンロードボタンを表示
   if (AppState.drBuffer) {
     $('btn-step5-dr-download').style.display = '';
+    $('btn-step5-bulk-download').style.display = '';
   } else {
     $('btn-step5-dr-download').style.display = 'none';
+    $('btn-step5-bulk-download').style.display = 'none';
   }
 }
 
@@ -848,6 +885,12 @@ async function handleDownload() {
     btn.disabled = false;
     btn.innerHTML = '<i class="fas fa-download"></i> 内勤請求Excelをダウンロード';
   }
+}
+
+async function handleBulkDownload() {
+  // 業務委託・DRを連続してダウンロード
+  await handleDownload();
+  if (AppState.drFile) await handleDRDownload();
 }
 
 async function handleDRDownload() {
