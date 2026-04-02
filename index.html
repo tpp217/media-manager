@@ -271,19 +271,21 @@
         <h2 class="step-title"><i class="fas fa-file-download"></i> 内勤請求出力</h2>
         <p class="step-desc">業務報告書・DR距離計算フォーマットの個人タブをそのままコピーして出力します。書式・色・罫線が元ファイルと完全一致します。</p>
 
-        <div class="step-actions">
+        <div class="step-actions" style="flex-wrap:wrap;gap:0.5rem">
           <button id="btn-step5-back" class="btn btn-outline"><i class="fas fa-arrow-left"></i> 戻る</button>
-          <button id="btn-step5-bulk-download" class="btn btn-success btn-lg" style="display:none">
-            <i class="fas fa-download"></i> 一括ダウンロード（業務委託＋DR）
-          </button>
-          <button id="btn-step5-download" class="btn btn-success btn-lg">
-            <i class="fas fa-download"></i> 内勤請求Excelをダウンロード
-          </button>
-          <button id="btn-step5-dr-download" class="btn btn-primary btn-lg" style="display:none">
-            <i class="fas fa-car"></i> DR請求Excelをダウンロード
-          </button>
-          <button id="btn-step5-restart" class="btn btn-outline btn-lg">
-            <i class="fas fa-redo"></i> 最初に戻る（STEP1）
+          <div id="step5-download-group" style="display:flex;flex-wrap:wrap;gap:0.5rem;flex:1;justify-content:flex-end">
+            <button id="btn-step5-bulk-download" class="btn btn-success btn-lg" style="display:none">
+              <i class="fas fa-download"></i> 一括DL（業務委託＋DR）
+            </button>
+            <button id="btn-step5-download" class="btn btn-success btn-lg">
+              <i class="fas fa-download"></i> 内勤請求Excel
+            </button>
+            <button id="btn-step5-dr-download" class="btn btn-primary btn-lg" style="display:none">
+              <i class="fas fa-car"></i> DR請求Excel
+            </button>
+          </div>
+          <button id="btn-step5-restart" class="btn btn-outline btn-lg" style="white-space:nowrap">
+            <i class="fas fa-redo"></i> 最初に戻る
           </button>
         </div>
 

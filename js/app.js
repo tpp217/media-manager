@@ -1839,10 +1839,15 @@ function handleBulkFiles(files, merge = false) {
   // 古い月から順にソート
   const sets = Object.values(map).sort((a, b) => a.periodYm.localeCompare(b.periodYm));
   window._bulkSets = sets;
+  window._bulkIgnored = ignoredCount;
 
   // ドロップゾーンを隠して一覧を表示
   $('bulk-drop-zone').style.display = 'none';
 
+  renderBulkTable(sets, ignoredCount);
+}
+
+function renderBulkTable(sets, ignoredCount) {
   // テーブル表示
   const tableEl = $('bulk-file-table');
   if (sets.length === 0) {
@@ -1854,13 +1859,18 @@ function handleBulkFiles(files, merge = false) {
       const mOk = s.monthly ? `<span class="badge badge-ok" title="${escapeHtml(s.monthly.name)}">✓ あり</span>` : '<span class="badge badge-ng">なし</span>';
       const dOk = s.dr      ? `<span class="badge badge-info" title="${escapeHtml(s.dr.name)}">✓ あり</span>`    : '<span class="badge badge-gray">なし</span>';
       const canRun = s.report && s.monthly;
-      return `<tr style="${canRun ? '' : 'opacity:.5'}">
+      const key = `${s.storeName}__${s.periodYm}`;
+      const statusCell = canRun
+        ? '<span class="badge badge-ok">処理可</span>'
+        : `<span class="badge badge-warn"><i class="fas fa-forward"></i> スキップ</span>
+           <button onclick="deleteBulkStore('${escapeHtml(key)}')" title="この店舗を削除" style="background:none;border:none;cursor:pointer;color:var(--danger);font-size:1rem;padding:0 0.3rem;vertical-align:middle" aria-label="削除"><i class="fas fa-times-circle"></i></button>`;
+      return `<tr data-bulk-key="${escapeHtml(key)}" style="${canRun ? '' : 'opacity:.5'}">
         <td style="padding:4px 8px;font-weight:700">${escapeHtml(s.storeName)}</td>
         <td style="padding:4px 8px">${s.periodYm.replace('-','年').replace(/(\d{2})$/,m=>parseInt(m)+'月')}</td>
         <td style="padding:4px 8px">${rOk}</td>
         <td style="padding:4px 8px">${mOk}</td>
         <td style="padding:4px 8px">${dOk}</td>
-        <td style="padding:4px 8px">${canRun ? '<span class="badge badge-ok">処理可</span>' : '<span class="badge badge-warn"><i class="fas fa-forward"></i> スキップ</span>'}</td>
+        <td style="padding:4px 8px">${statusCell}</td>
       </tr>`;
     }).join('');
     tableEl.innerHTML = `
@@ -1887,6 +1897,15 @@ function handleBulkFiles(files, merge = false) {
 
   $('bulk-file-list').style.display = 'block';
   $('bulk-actions').style.display   = 'flex';
+}
+
+function deleteBulkStore(key) {
+  // _bulkMap と _bulkSets から該当店舗を削除して再描画
+  if (!window._bulkMap || !window._bulkSets) return;
+  delete window._bulkMap[key];
+  window._bulkSets = window._bulkSets.filter(s => `${s.storeName}__${s.periodYm}` !== key);
+  renderBulkTable(window._bulkSets, window._bulkIgnored || 0);
+  showToast('店舗を削除しました', 'info');
 }
 
 async function runBulkImport() {
