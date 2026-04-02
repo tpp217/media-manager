@@ -640,8 +640,8 @@ async function runStep4() {
     if (alerts > 0) showToast(`業務委託差分: ${alerts}件の要確認項目があります`, 'warning');
     else showToast('前月差分チェック完了', 'success');
 
-    // スナップショット一覧を更新
-    loadSnapshotList();
+    // スナップショット一覧を更新（AI-Drive書き込み完了を待つ）
+    setTimeout(() => loadSnapshotList(), 3000);
 
   } catch (e) {
     console.error('Step4 error:', e);
@@ -1095,10 +1095,13 @@ function setupReset() {
   $('btn-reset-storage').addEventListener('click', async () => {
     if (!confirmDialog('保存されているすべてのスナップショットデータを削除しますか？\n（業務委託・DRの前月差分チェックのデータがリセットされます）')) return;
     try {
+      showToast('データを削除中...（数秒かかります）', 'info');
       await deleteAllSnapshots();
       await deleteAllDRSnapshots();
+      // AI-Drive書き込み完了を待ってからリスト更新
+      await new Promise(r => setTimeout(r, 3000));
       showToast('データをリセットしました（業務委託・DR両方）', 'success');
-      await loadSnapshotList(); // 一覧を再読み込み
+      await loadSnapshotList();
     } catch (e) {
       showToast('リセットに失敗しました: ' + e.message, 'error');
     }
@@ -1966,6 +1969,7 @@ async function runBulkImport() {
   }
 
   log(`─── 完了: ${done}件処理しました ───`, 'ok');
+  await new Promise(r => setTimeout(r, 3000));
   await loadSnapshotList();
 
   // 閉じるボタンを追加
