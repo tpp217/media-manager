@@ -995,6 +995,47 @@ tr.row-dr-ng td     { background: rgba(255,51,85,0.05); }
 }
 .snapshot-store-chip i { font-size: 0.62rem; opacity: 0.7; }
 
+/* 店舗削除ボタン */
+.snapshot-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid rgba(255,80,80,0.25);
+  background: transparent;
+  color: rgba(255,100,100,0.5);
+  font-size: 0.65rem;
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+  white-space: nowrap;
+  gap: 0.25rem;
+  margin-left: 0.15rem;
+}
+.snapshot-delete-btn:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(255,80,80,0.08);
+}
+
+/* 年月ごとの全削除ボタン */
+.snapshot-period-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid rgba(255,80,80,0.2);
+  background: transparent;
+  color: rgba(255,100,100,0.4);
+  font-size: 0.62rem;
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+  gap: 0.2rem;
+  margin-left: 0.3rem;
+}
+.snapshot-period-delete-btn:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(255,80,80,0.08);
+}
+
 /* ═══════════════════════════════════════════
    SNAPSHOT DETAIL MODAL
 ═══════════════════════════════════════════ */

@@ -1157,22 +1157,72 @@ async function loadSnapshotList() {
       const row = document.createElement('div');
       row.className = 'snapshot-row';
 
-      // 年月ラベル
+      // 年月ラベル ＋ この月を全削除ボタン
+      const periodWrap = document.createElement('span');
+      periodWrap.style.display = 'inline-flex';
+      periodWrap.style.alignItems = 'center';
+      periodWrap.style.minWidth = '6.5em';
+
       const periodSpan = document.createElement('span');
       periodSpan.className = 'snapshot-period';
       periodSpan.textContent = periodLabel;
-      row.appendChild(periodSpan);
+      periodWrap.appendChild(periodSpan);
 
-      // 店舗チップ群（クリックで詳細モーダル）
+      const periodDelBtn = document.createElement('button');
+      periodDelBtn.className = 'snapshot-period-delete-btn';
+      periodDelBtn.innerHTML = '<i class="fas fa-trash-alt"></i> 月削除';
+      periodDelBtn.title = `${periodLabel}のデータをすべて削除`;
+      periodDelBtn.addEventListener('click', async () => {
+        if (!confirmDialog(`${periodLabel}のスナップショットをすべて削除しますか？\n（${storeNames.length}店舗分・業務委託＋DR）`)) return;
+        try {
+          showToast('削除中...', 'info');
+          await Promise.all(storeNames.flatMap(s => [
+            deleteSnapshotsByStorePeriod(s, periodYm),
+            deleteDRSnapshotsByStorePeriod(s, periodYm)
+          ]));
+          await loadSnapshotList();
+          showToast(`${periodLabel}のデータを削除しました`, 'success');
+        } catch (e) {
+          showToast('削除に失敗しました: ' + e.message, 'error');
+        }
+      });
+      periodWrap.appendChild(periodDelBtn);
+      row.appendChild(periodWrap);
+
+      // 店舗チップ群（クリックで詳細モーダル）＋ 店舗ごと削除ボタン
       const storesWrap = document.createElement('span');
       storesWrap.className = 'snapshot-stores';
       for (const storeName of storeNames) {
+        const chipWrap = document.createElement('span');
+        chipWrap.style.display = 'inline-flex';
+        chipWrap.style.alignItems = 'center';
+
         const chip = document.createElement('span');
         chip.className = 'snapshot-store-chip';
         chip.innerHTML = `<i class="fas fa-store"></i> ${escapeHtml(storeName || '店舗名不明')}`;
         chip.title = `${periodLabel} / ${storeName} — クリックして詳細表示`;
         chip.addEventListener('click', () => openSnapshotModal(storeName, periodYm, periodLabel));
-        storesWrap.appendChild(chip);
+        chipWrap.appendChild(chip);
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'snapshot-delete-btn';
+        delBtn.innerHTML = '<i class="fas fa-times"></i>';
+        delBtn.title = `${periodLabel} / ${storeName} を削除`;
+        delBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirmDialog(`${periodLabel} / ${storeName} のスナップショットを削除しますか？`)) return;
+          try {
+            showToast('削除中...', 'info');
+            await deleteSnapshotsByStorePeriod(storeName, periodYm);
+            await deleteDRSnapshotsByStorePeriod(storeName, periodYm);
+            await loadSnapshotList();
+            showToast(`${storeName}（${periodLabel}）を削除しました`, 'success');
+          } catch (e) {
+            showToast('削除に失敗しました: ' + e.message, 'error');
+          }
+        });
+        chipWrap.appendChild(delBtn);
+        storesWrap.appendChild(chipWrap);
       }
       row.appendChild(storesWrap);
       listEl.appendChild(row);
