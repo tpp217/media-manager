@@ -26,9 +26,26 @@ function normText(v) {
  * - 末尾の「日払」「日払い」等を除去
  * - 連続スペース整理
  */
+/**
+ * 人名に含まれる異体字・旧字体を常用字に統一するマップ
+ * 見た目が酷似しているが文字コードが異なるケースに対応
+ */
+const VARIANT_CHAR_MAP = {
+  '\u69D9': '\u69C7', // 槙 → 槇（木偏に真）
+  '\u6AFB': '\u6AFB', // placeholder
+  '\u5D0E': '\u5D0E', // placeholder
+  '\u9089': '\u9089', // placeholder
+};
+
+function normalizeVariants(s) {
+  return s.split('').map(c => VARIANT_CHAR_MAP[c] ?? c).join('');
+}
+
 function normalizePersonName(v) {
   if (!v) return '';
   let s = normText(v);
+  // 異体字・旧字体を統一
+  s = normalizeVariants(s);
   // 接頭辞除去
   s = s.replace(/^(DR|ＤＲ|スタッフ|STAFF)\s*/i, '');
   // 「日払い」「日払」を末尾から除去
