@@ -1092,18 +1092,97 @@ function renderDRReconcileTable(results) {
 // リセット
 // ==============================
 function setupReset() {
-  $('btn-reset-storage').addEventListener('click', async () => {
-    if (!confirmDialog('保存されているすべてのスナップショットデータを削除しますか？\n（業務委託・DRの前月差分チェックのデータがリセットされます）')) return;
+  // 全消去ボタンは廃止 → 選択削除UIに移行
+  setupSnapshotSelectDelete();
+}
+
+// ==============================
+// スナップショット選択削除
+// ==============================
+function setupSnapshotSelectDelete() {
+  const selectBtn = $('btn-snapshot-select-delete');
+  const runBtn    = $('btn-snapshot-delete-run');
+  const cancelBtn = $('btn-snapshot-delete-cancel');
+  if (!selectBtn) return;
+
+  let selectMode = false;
+
+  function enterSelectMode() {
+    selectMode = true;
+    selectBtn.style.display  = 'none';
+    runBtn.style.display     = '';
+    cancelBtn.style.display  = '';
+    runBtn.disabled = true;
+    // 各行にチェックボックスを追加
+    document.querySelectorAll('.snapshot-row').forEach(row => {
+      row.classList.add('select-mode');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'snapshot-select-checkbox';
+      cb.addEventListener('change', updateDeleteBtn);
+      row.insertBefore(cb, row.firstChild);
+      row.addEventListener('click', onRowClick);
+    });
+  }
+
+  function exitSelectMode() {
+    selectMode = false;
+    selectBtn.style.display  = '';
+    runBtn.style.display     = 'none';
+    cancelBtn.style.display  = 'none';
+    document.querySelectorAll('.snapshot-row').forEach(row => {
+      row.classList.remove('select-mode', 'selected');
+      const cb = row.querySelector('.snapshot-select-checkbox');
+      if (cb) cb.remove();
+      row.removeEventListener('click', onRowClick);
+    });
+  }
+
+  function onRowClick(e) {
+    if (e.target.classList.contains('snapshot-select-checkbox')) return;
+    if (e.target.closest('.snapshot-store-chip')) return;
+    const row = e.currentTarget;
+    const cb = row.querySelector('.snapshot-select-checkbox');
+    if (cb) { cb.checked = !cb.checked; row.classList.toggle('selected', cb.checked); updateDeleteBtn(); }
+  }
+
+  function updateDeleteBtn() {
+    const checked = document.querySelectorAll('.snapshot-select-checkbox:checked').length;
+    runBtn.disabled = checked === 0;
+    runBtn.innerHTML = checked > 0
+      ? `<i class="fas fa-trash-alt"></i> ${checked}件を削除`
+      : '<i class="fas fa-trash-alt"></i> 削除する';
+  }
+
+  selectBtn.addEventListener('click', () => enterSelectMode());
+
+  cancelBtn.addEventListener('click', () => exitSelectMode());
+
+  runBtn.addEventListener('click', async () => {
+    const selected = [...document.querySelectorAll('.snapshot-row.selected')];
+    if (selected.length === 0) return;
+
+    // 各行のdata-store / data-periodを取得
+    const targets = selected.map(row => ({
+      storeName: row.dataset.storeName,
+      periodYm:  row.dataset.periodYm,
+      label:     row.dataset.label,
+    }));
+
+    const names = targets.map(t => `・${t.label} / ${t.storeName}`).join('\n');
+    if (!confirmDialog(`以下のスナップショットを削除しますか？\n\n${names}`)) return;
+
     try {
-      showToast('データを削除中...（数秒かかります）', 'info');
-      await deleteAllSnapshots();
-      await deleteAllDRSnapshots();
-      // AI-Drive書き込み完了を待ってからリスト更新
-      await new Promise(r => setTimeout(r, 3000));
-      showToast('データをリセットしました（業務委託・DR両方）', 'success');
+      showToast('削除中...', 'info');
+      await Promise.all(targets.flatMap(t => [
+        deleteSnapshotsByStorePeriod(t.storeName, t.periodYm),
+        deleteDRSnapshotsByStorePeriod(t.storeName, t.periodYm),
+      ]));
+      exitSelectMode();
       await loadSnapshotList();
+      showToast(`${targets.length}件のスナップショットを削除しました`, 'success');
     } catch (e) {
-      showToast('リセットに失敗しました: ' + e.message, 'error');
+      showToast('削除に失敗しました: ' + e.message, 'error');
     }
   });
 }
@@ -1154,78 +1233,32 @@ async function loadSnapshotList() {
       const [y, m] = (periodYm || '').split('-');
       const periodLabel = y && m ? `${y}年${m}月` : periodYm;
 
-      const row = document.createElement('div');
-      row.className = 'snapshot-row';
-
-      // 年月ラベル ＋ この月を全削除ボタン
-      const periodWrap = document.createElement('span');
-      periodWrap.style.display = 'inline-flex';
-      periodWrap.style.alignItems = 'center';
-      periodWrap.style.minWidth = '6.5em';
-
-      const periodSpan = document.createElement('span');
-      periodSpan.className = 'snapshot-period';
-      periodSpan.textContent = periodLabel;
-      periodWrap.appendChild(periodSpan);
-
-      const periodDelBtn = document.createElement('button');
-      periodDelBtn.className = 'snapshot-period-delete-btn';
-      periodDelBtn.innerHTML = '<i class="fas fa-trash-alt"></i> 月削除';
-      periodDelBtn.title = `${periodLabel}のデータをすべて削除`;
-      periodDelBtn.addEventListener('click', async () => {
-        if (!confirmDialog(`${periodLabel}のスナップショットをすべて削除しますか？\n（${storeNames.length}店舗分・業務委託＋DR）`)) return;
-        try {
-          showToast('削除中...', 'info');
-          await Promise.all(storeNames.flatMap(s => [
-            deleteSnapshotsByStorePeriod(s, periodYm),
-            deleteDRSnapshotsByStorePeriod(s, periodYm)
-          ]));
-          await loadSnapshotList();
-          showToast(`${periodLabel}のデータを削除しました`, 'success');
-        } catch (e) {
-          showToast('削除に失敗しました: ' + e.message, 'error');
-        }
-      });
-      periodWrap.appendChild(periodDelBtn);
-      row.appendChild(periodWrap);
-
-      // 店舗チップ群（クリックで詳細モーダル）＋ 店舗ごと削除ボタン
-      const storesWrap = document.createElement('span');
-      storesWrap.className = 'snapshot-stores';
       for (const storeName of storeNames) {
-        const chipWrap = document.createElement('span');
-        chipWrap.style.display = 'inline-flex';
-        chipWrap.style.alignItems = 'center';
+        const row = document.createElement('div');
+        row.className = 'snapshot-row';
+        row.dataset.storeName = storeName;
+        row.dataset.periodYm  = periodYm;
+        row.dataset.label     = periodLabel;
 
+        // 年月ラベル
+        const periodSpan = document.createElement('span');
+        periodSpan.className = 'snapshot-period';
+        periodSpan.textContent = periodLabel;
+        row.appendChild(periodSpan);
+
+        // 店舗チップ（クリックで詳細モーダル）
         const chip = document.createElement('span');
         chip.className = 'snapshot-store-chip';
         chip.innerHTML = `<i class="fas fa-store"></i> ${escapeHtml(storeName || '店舗名不明')}`;
         chip.title = `${periodLabel} / ${storeName} — クリックして詳細表示`;
-        chip.addEventListener('click', () => openSnapshotModal(storeName, periodYm, periodLabel));
-        chipWrap.appendChild(chip);
-
-        const delBtn = document.createElement('button');
-        delBtn.className = 'snapshot-delete-btn';
-        delBtn.innerHTML = '<i class="fas fa-times"></i>';
-        delBtn.title = `${periodLabel} / ${storeName} を削除`;
-        delBtn.addEventListener('click', async (e) => {
+        chip.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (!confirmDialog(`${periodLabel} / ${storeName} のスナップショットを削除しますか？`)) return;
-          try {
-            showToast('削除中...', 'info');
-            await deleteSnapshotsByStorePeriod(storeName, periodYm);
-            await deleteDRSnapshotsByStorePeriod(storeName, periodYm);
-            await loadSnapshotList();
-            showToast(`${storeName}（${periodLabel}）を削除しました`, 'success');
-          } catch (e) {
-            showToast('削除に失敗しました: ' + e.message, 'error');
-          }
+          openSnapshotModal(storeName, periodYm, periodLabel);
         });
-        chipWrap.appendChild(delBtn);
-        storesWrap.appendChild(chipWrap);
+        row.appendChild(chip);
+
+        listEl.appendChild(row);
       }
-      row.appendChild(storesWrap);
-      listEl.appendChild(row);
     }
   } catch (e) {
     console.error('スナップショット一覧取得エラー:', e);

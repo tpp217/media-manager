@@ -27,9 +27,6 @@
         </div>
         <div class="header-actions" style="display:flex;align-items:center;gap:0.75rem;">
           <span style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-muted);letter-spacing:0.08em;" id="header-clock"></span>
-          <button id="btn-reset-storage" class="btn btn-sm btn-outline" title="保存データをリセット">
-            <i class="fas fa-power-off"></i> RESET
-          </button>
         </div>
       </div>
     </header>
@@ -156,9 +153,20 @@
         <div class="snapshot-panel" id="snapshot-panel">
           <div class="snapshot-panel-header">
             <span><i class="fas fa-database"></i> SAVED SNAPSHOTS</span>
-            <button id="btn-bulk-import" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.6rem;">
-              <i class="fas fa-folder-open"></i> 一括インポート
-            </button>
+            <div style="display:flex;gap:0.4rem;align-items:center;">
+              <button id="btn-snapshot-select-delete" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.6rem;">
+                <i class="fas fa-trash-alt"></i> 選択削除
+              </button>
+              <button id="btn-snapshot-delete-run" class="btn btn-danger" style="font-size:0.72rem;padding:0.2rem 0.6rem;display:none;">
+                <i class="fas fa-trash-alt"></i> 削除する
+              </button>
+              <button id="btn-snapshot-delete-cancel" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.6rem;display:none;">
+                キャンセル
+              </button>
+              <button id="btn-bulk-import" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.6rem;">
+                <i class="fas fa-folder-open"></i> 一括インポート
+              </button>
+            </div>
           </div>
           <div id="snapshot-list" class="snapshot-list">
             <div class="snapshot-empty"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>
