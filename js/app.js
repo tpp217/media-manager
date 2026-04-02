@@ -1105,45 +1105,35 @@ function setupSnapshotSelectDelete() {
   const cancelBtn = $('btn-snapshot-delete-cancel');
   if (!selectBtn) return;
 
-  let selectMode = false;
-
   function enterSelectMode() {
-    selectMode = true;
     selectBtn.style.display  = 'none';
     runBtn.style.display     = '';
     cancelBtn.style.display  = '';
     runBtn.disabled = true;
-    // 各行にチェックボックスを追加
-    document.querySelectorAll('.snapshot-row').forEach(row => {
-      row.classList.add('select-mode');
+    // 各チップにチェックボックスを追加
+    document.querySelectorAll('.snapshot-chip-wrap').forEach(wrap => {
+      wrap.style.cursor = 'pointer';
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'snapshot-select-checkbox';
-      cb.addEventListener('change', updateDeleteBtn);
-      row.insertBefore(cb, row.firstChild);
-      row.addEventListener('click', onRowClick);
+      cb.addEventListener('change', () => {
+        wrap.classList.toggle('selected', cb.checked);
+        updateDeleteBtn();
+      });
+      wrap.insertBefore(cb, wrap.firstChild);
     });
   }
 
   function exitSelectMode() {
-    selectMode = false;
     selectBtn.style.display  = '';
     runBtn.style.display     = 'none';
     cancelBtn.style.display  = 'none';
-    document.querySelectorAll('.snapshot-row').forEach(row => {
-      row.classList.remove('select-mode', 'selected');
-      const cb = row.querySelector('.snapshot-select-checkbox');
+    document.querySelectorAll('.snapshot-chip-wrap').forEach(wrap => {
+      wrap.classList.remove('selected');
+      wrap.style.cursor = '';
+      const cb = wrap.querySelector('.snapshot-select-checkbox');
       if (cb) cb.remove();
-      row.removeEventListener('click', onRowClick);
     });
-  }
-
-  function onRowClick(e) {
-    if (e.target.classList.contains('snapshot-select-checkbox')) return;
-    if (e.target.closest('.snapshot-store-chip')) return;
-    const row = e.currentTarget;
-    const cb = row.querySelector('.snapshot-select-checkbox');
-    if (cb) { cb.checked = !cb.checked; row.classList.toggle('selected', cb.checked); updateDeleteBtn(); }
   }
 
   function updateDeleteBtn() {
@@ -1155,18 +1145,16 @@ function setupSnapshotSelectDelete() {
   }
 
   selectBtn.addEventListener('click', () => enterSelectMode());
-
   cancelBtn.addEventListener('click', () => exitSelectMode());
 
   runBtn.addEventListener('click', async () => {
-    const selected = [...document.querySelectorAll('.snapshot-row.selected')];
+    const selected = [...document.querySelectorAll('.snapshot-chip-wrap.selected')];
     if (selected.length === 0) return;
 
-    // 各行のdata-store / data-periodを取得
-    const targets = selected.map(row => ({
-      storeName: row.dataset.storeName,
-      periodYm:  row.dataset.periodYm,
-      label:     row.dataset.label,
+    const targets = selected.map(wrap => ({
+      storeName: wrap.dataset.storeName,
+      periodYm:  wrap.dataset.periodYm,
+      label:     wrap.dataset.label,
     }));
 
     const names = targets.map(t => `・${t.label} / ${t.storeName}`).join('\n');
@@ -1233,32 +1221,52 @@ async function loadSnapshotList() {
       const [y, m] = (periodYm || '').split('-');
       const periodLabel = y && m ? `${y}年${m}月` : periodYm;
 
+      const row = document.createElement('div');
+      row.className = 'snapshot-row';
+      row.dataset.periodYm = periodYm;
+      row.dataset.label    = periodLabel;
+
+      // 年月ラベル
+      const periodSpan = document.createElement('span');
+      periodSpan.className = 'snapshot-period';
+      periodSpan.textContent = periodLabel;
+      row.appendChild(periodSpan);
+
+      // 店舗チップ群
+      const storesWrap = document.createElement('span');
+      storesWrap.className = 'snapshot-stores';
+
       for (const storeName of storeNames) {
-        const row = document.createElement('div');
-        row.className = 'snapshot-row';
-        row.dataset.storeName = storeName;
-        row.dataset.periodYm  = periodYm;
-        row.dataset.label     = periodLabel;
+        const chipWrap = document.createElement('span');
+        chipWrap.className = 'snapshot-chip-wrap';
+        chipWrap.dataset.storeName = storeName;
+        chipWrap.dataset.periodYm  = periodYm;
+        chipWrap.dataset.label     = periodLabel;
+        chipWrap.style.display = 'inline-flex';
+        chipWrap.style.alignItems = 'center';
 
-        // 年月ラベル
-        const periodSpan = document.createElement('span');
-        periodSpan.className = 'snapshot-period';
-        periodSpan.textContent = periodLabel;
-        row.appendChild(periodSpan);
-
-        // 店舗チップ（クリックで詳細モーダル）
         const chip = document.createElement('span');
         chip.className = 'snapshot-store-chip';
         chip.innerHTML = `<i class="fas fa-store"></i> ${escapeHtml(storeName || '店舗名不明')}`;
         chip.title = `${periodLabel} / ${storeName} — クリックして詳細表示`;
         chip.addEventListener('click', (e) => {
           e.stopPropagation();
+          // 選択モード中はチェック切り替え
+          if (chipWrap.querySelector('.snapshot-select-checkbox')) {
+            const cb = chipWrap.querySelector('.snapshot-select-checkbox');
+            cb.checked = !cb.checked;
+            chipWrap.classList.toggle('selected', cb.checked);
+            updateDeleteBtn();
+            return;
+          }
           openSnapshotModal(storeName, periodYm, periodLabel);
         });
-        row.appendChild(chip);
-
-        listEl.appendChild(row);
+        chipWrap.appendChild(chip);
+        storesWrap.appendChild(chipWrap);
       }
+
+      row.appendChild(storesWrap);
+      listEl.appendChild(row);
     }
   } catch (e) {
     console.error('スナップショット一覧取得エラー:', e);

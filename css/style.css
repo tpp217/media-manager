@@ -1038,24 +1038,19 @@ tr.row-dr-ng td     { background: rgba(255,51,85,0.05); }
 
 /* 選択モード: チェックボックス */
 .snapshot-select-checkbox {
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
   accent-color: var(--danger);
   cursor: pointer;
   flex-shrink: 0;
+  margin-right: 3px;
 }
 
-/* 選択モード: 行ハイライト */
-.snapshot-row.select-mode {
-  cursor: pointer;
-}
-.snapshot-row.select-mode:hover {
-  background: rgba(255,80,80,0.05);
-  border-color: rgba(255,80,80,0.2);
-}
-.snapshot-row.select-mode.selected {
-  background: rgba(255,80,80,0.08);
-  border-color: rgba(255,80,80,0.35);
+/* 選択モード: チップ選択状態 */
+.snapshot-chip-wrap.selected .snapshot-store-chip {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(255,80,80,0.1);
 }
 
 /* ═══════════════════════════════════════════
