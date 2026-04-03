@@ -1,2281 +1,1018 @@
 /**
- * app.js - アプリケーションコントローラー
- * 
- * 画面制御・イベント処理・ステップ間のデータ受け渡し
+ * MEDIA-MGR v2.0 — メインアプリケーション
+ * サイバーパンク Yellow Theme
  */
 
 'use strict';
 
-// ==============================
-// アプリケーション状態
-// ==============================
-const AppState = {
-  // ステップ1: アップロード
-  reportFile: null,
-  monthlyFile: null,
-  drFile: null,          // DR距離計算ファイル（任意）
-  reportBuffer: null,
-  monthlyBuffer: null,
-  drBuffer: null,
-  storeName: '',
-  periodYm: '',
-
-  // ステップ2: 委託者
-  allPeople: [],          // 社員名簿の全員（表示用）
-  contractors: [],        // 業務委託者のみ（突合・差分・出力用）
-  parseWarnings: [],
-
-  // ステップ3: 日払い突合
-  dailyPayEntries: [],
-  reconcileResults: [],
-  drList: [],            // DR一覧
-  drReconcileResults: [],// DR突合結果
-
-  // ステップ4: 前月差分
-  prevContractors: [],
-  diffResults: [],
-  prevDrList: [],
-  drDiffResults: [],
-
-  // 現在のステップ
-  currentStep: 1
+/* ============================================================
+   STATE
+   ============================================================ */
+const state = {
+  files: [],          // {file, name, size, wb, rows, status}
+  allRows: [],        // 統合後の全行データ [{brand,category,agency,media,plan,note,amount,_colors,_src}]
+  agencies: [],       // 代理店一覧（順序付き）
+  folderName: '',     // ドロップされたフォルダ名
+  currentTab: 'all',
+  searchQuery: '',
+  sortCol: null,
+  sortDir: 'asc',
+  page: 1,
+  pageSize: 50,
+  previewTarget: null, // {type:'master'|'agency', agencies:[]}
 };
 
-// ==============================
-// 初期化
-// ==============================
-document.addEventListener('DOMContentLoaded', () => {
-  setupStep1();
-  setupStep2();
-  setupStep3();
-  setupStep4();
-  setupStep5();
-  setupReset();
-  setupTabs();
-  setupSnapshotModal();
-  setupBulkImport();
-  loadSnapshotList();
-  initOrganizerModal();
+/* ============================================================
+   DOM REFS
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const els = {
+  dropZone:        $('dropZone'),
+  fileInput:       $('fileInput'),
+  folderInput:     $('folderInput'),
+  uploadedFiles:   $('uploadedFiles'),
+  filesList:       $('filesList'),
+  folderInfoBar:   $('folderInfoBar'),
+  folderNameEl:    $('folderName'),
+  folderBadge:     $('folderBadge'),
+  uploadedTitle:   $('uploadedTitle'),
+  btnClearFiles:   $('btnClearFiles'),
+  btnIntegrate:    $('btnIntegrate'),
+  processInfo:     $('processInfo'),
+  uploadStatus:    $('uploadStatus'),
+  uploadPanel:     $('uploadPanel'),
+  dataPanel:       $('dataPanel'),
+  exportPanel:     $('exportPanel'),
+  get tabNav() { return $('tabNav').querySelector('.tab-nav-scroll'); },
+  tableBody:       $('tableBody'),
+  pagination:      $('pagination'),
+  searchInput:     $('searchInput'),
+  summaryTotal:    $('summaryTotal'),
+  summaryAgencies: $('summaryAgencies'),
+  summaryAmount:   $('summaryAmount'),
+  summaryView:     $('summaryView'),
+  btnBack:         $('btnBack'),
+  btnToExport:     $('btnToExport'),
+  fileCount:       $('fileCount'),
+  rowCount:        $('rowCount'),
+  statusDot:       $('statusDot'),
+  statusText:      $('statusText'),
+  masterFileName:  $('masterFileName'),
+  agencyFilePrefix:$('agencyFilePrefix'),
+  agencyCheckboxes:$('agencyCheckboxes'),
+  btnExportMaster: $('btnExportMaster'),
+  btnExportAgency: $('btnExportAgency'),
+  btnSelectAll:    $('btnSelectAll'),
+  btnDeselectAll:  $('btnDeselectAll'),
+  optAllSheet:     $('optAllSheet'),
+  optAgencySheets: $('optAgencySheets'),
+  floatingActions: $('floatingActions'),
+  fabExport:       $('fabExport'),
+  fabReset:        $('fabReset'),
+  logConsole:      $('logConsole'),
+  logBody:         $('logBody'),
+  logToggle:       $('logToggle'),
+  toastContainer:  $('toastContainer'),
+};
+
+/* ============================================================
+   CLOCK
+   ============================================================ */
+function updateClock() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  $('clock').textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  $('dateDisplay').textContent = `${now.getFullYear()}/${pad(now.getMonth()+1)}/${pad(now.getDate())}`;
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+/* ============================================================
+   SYSTEM LOG
+   ============================================================ */
+function sysLog(msg, type='info') {
+  const entry = document.createElement('div');
+  entry.className = `log-entry ${type}`;
+  const now = new Date();
+  const ts = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  entry.innerHTML = `<span class="log-time">[${ts}]</span><span class="log-msg">${msg}</span>`;
+  els.logBody.appendChild(entry);
+  els.logBody.scrollTop = els.logBody.scrollHeight;
+}
+
+/* ============================================================
+   TOAST
+   ============================================================ */
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  els.toastContainer.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+/* ============================================================
+   LOADING OVERLAY
+   ============================================================ */
+function showLoading(title='PROCESSING...', sub='') {
+  let ov = $('loadingOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'loadingOverlay';
+    ov.className = 'loading-overlay';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `
+    <div class="loading-title">${title}</div>
+    <div class="loading-sub">${sub}</div>
+    <div class="loading-bar-wrap"><div class="loading-bar"></div></div>
+  `;
+  ov.style.display = 'flex';
+}
+function hideLoading() {
+  const ov = $('loadingOverlay');
+  if (ov) ov.style.display = 'none';
+}
+
+/* ============================================================
+   LOG TOGGLE
+   ============================================================ */
+els.logToggle.addEventListener('click', () => {
+  const body = els.logBody;
+  const isHidden = body.style.display === 'none';
+  body.style.display = isHidden ? 'block' : 'none';
+  els.logToggle.textContent = isHidden ? '▼' : '▲';
 });
 
-// ==============================
-// ステップ1: アップロード
-// ==============================
-function setupStep1() {
-  const inputReport  = $('input-report');
-  const inputMonthly = $('input-monthly');
-  const inputDR      = $('input-dr');
-  const dropReport   = $('drop-report');
-  const dropMonthly  = $('drop-monthly');
-  const dropDR       = $('drop-dr');
+/* ============================================================
+   FILE DROP & SELECT
+   ============================================================ */
 
-  inputReport.addEventListener('change',  e => handleReportFile(e.target.files[0]));
-  inputMonthly.addEventListener('change', e => handleMonthlyFile(e.target.files[0]));
-  inputDR.addEventListener('change',      e => handleDRFile(e.target.files[0]));
+// ドロップゾーン Drag & Drop
+els.dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  els.dropZone.classList.add('drag-over');
+});
+els.dropZone.addEventListener('dragleave', () => {
+  els.dropZone.classList.remove('drag-over');
+});
+els.dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  els.dropZone.classList.remove('drag-over');
+  handleDrop(e.dataTransfer);
+});
+els.dropZone.addEventListener('click', e => {
+  // ラベルのクリックはそのまま通す
+  if (e.target.tagName === 'LABEL' || e.target.closest('label')) return;
+});
 
-  setupDropZone(dropReport,  file => handleReportFile(file));
-  setupDropZone(dropMonthly, file => handleMonthlyFile(file));
-  setupDropZone(dropDR,      file => handleDRFile(file));
+// フォルダ選択
+els.folderInput.addEventListener('change', e => {
+  const files = Array.from(e.target.files).filter(f => /\.(xlsx|xls)$/i.test(f.name));
+  if (files.length === 0) return;
+  // webkitRelativePathからフォルダ名取得
+  const firstPath = files[0].webkitRelativePath || '';
+  const folderName = firstPath.split('/')[0] || '';
+  handleFiles(files, folderName);
+  e.target.value = '';
+});
 
-  $('btn-step1-next').addEventListener('click', () => goToStep(2));
+// ファイル選択
+els.fileInput.addEventListener('change', e => {
+  const files = Array.from(e.target.files);
+  handleFiles(files, '');
+  e.target.value = '';
+});
+
+/**
+ * ドロップ処理 — FileSystemEntry API でフォルダ再帰読み込み対応
+ */
+async function handleDrop(dataTransfer) {
+  const excelFiles = [];
+  let folderName = '';
+
+  const items = Array.from(dataTransfer.items || []);
+
+  if (items.length > 0 && items[0].webkitGetAsEntry) {
+    // FileSystemEntry API を使う
+    const entries = items.map(i => i.webkitGetAsEntry()).filter(Boolean);
+
+    for (const entry of entries) {
+      if (entry.isDirectory) {
+        folderName = folderName || entry.name;
+        await collectFromDirectory(entry, excelFiles);
+      } else if (entry.isFile && /\.(xlsx|xls)$/i.test(entry.name)) {
+        const file = await getFileFromEntry(entry);
+        excelFiles.push(file);
+      }
+    }
+  } else {
+    // フォールバック
+    const files = Array.from(dataTransfer.files || []).filter(f => /\.(xlsx|xls)$/i.test(f.name));
+    excelFiles.push(...files);
+  }
+
+  handleFiles(excelFiles, folderName);
 }
 
-function setupDropZone(zone, onFile) {
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-  zone.addEventListener('drop', e => {
-    e.preventDefault();
-    zone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file) onFile(file);
+function getFileFromEntry(entry) {
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+async function collectFromDirectory(dirEntry, files) {
+  const reader = dirEntry.createReader();
+  return new Promise(resolve => {
+    reader.readEntries(async entries => {
+      for (const entry of entries) {
+        if (entry.isDirectory) {
+          await collectFromDirectory(entry, files);
+        } else if (entry.isFile && /\.(xlsx|xls)$/i.test(entry.name)) {
+          const file = await getFileFromEntry(entry);
+          files.push(file);
+        }
+      }
+      resolve();
+    });
   });
 }
 
-async function handleReportFile(file) {
-  if (!file) return;
-  AppState.reportFile = file;
-  AppState.reportBuffer = await readFileAsArrayBuffer(file);
-  showFileInfo('report-file-info', file.name, file.size);
-  updateStep1UI();
-  tryAutoDetect();
-}
-
-async function handleMonthlyFile(file) {
-  if (!file) return;
-  AppState.monthlyFile = file;
-  AppState.monthlyBuffer = await readFileAsArrayBuffer(file);
-  showFileInfo('monthly-file-info', file.name, file.size);
-  updateStep1UI();
-  tryAutoDetect();
-}
-
-async function handleDRFile(file) {
-  if (!file) return;
-  AppState.drFile = file;
-  AppState.drBuffer = await readFileAsArrayBuffer(file);
-  showFileInfo('dr-file-info', file.name, file.size);
-  // DR検出表示
-  const drItem = $('detected-dr-item');
-  if (drItem) drItem.style.display = '';
-  show($('detected-info'));
-  showToast(`DRファイル「${file.name}」を読み込みました`, 'success');
-}
-
-function showFileInfo(elementId, name, size) {
-  const el = $(elementId);
-  // elementId から対応する fileKey を特定（例: report-file-info → report）
-  const keyMap = { 'report-file-info': 'report', 'monthly-file-info': 'monthly', 'dr-file-info': 'dr' };
-  const fileKey = keyMap[elementId] || '';
-  el.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
-      <div>
-        <div class="file-name"><i class="fas fa-file-excel"></i> ${name}</div>
-        <div style="font-size:0.8rem;color:var(--gray-400);margin-top:2px">${(size / 1024).toFixed(1)} KB</div>
-      </div>
-      <button onclick="clearFile('${fileKey}')" title="削除" style="background:none;border:none;cursor:pointer;color:var(--danger);font-size:0.72rem;padding:0;text-decoration:underline;text-underline-offset:2px;opacity:0.8" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'" aria-label="ファイルを削除">削除</button>
-    </div>`;
-  show(el);
-}
-
-function clearFile(fileKey) {
-  const infoId = { report: 'report-file-info', monthly: 'monthly-file-info', dr: 'dr-file-info' }[fileKey];
-  const inputId = { report: 'input-report', monthly: 'input-monthly', dr: 'input-dr' }[fileKey];
-  if (!infoId) return;
-  // AppState をクリア
-  if (fileKey === 'report')  { AppState.reportFile  = null; AppState.reportBuffer  = null; }
-  if (fileKey === 'monthly') { AppState.monthlyFile = null; AppState.monthlyBuffer = null; }
-  if (fileKey === 'dr')      { AppState.drFile      = null; AppState.drBuffer      = null; }
-  // ファイル情報エリアを非表示
-  const el = $(infoId);
-  if (el) { el.innerHTML = ''; hide(el); }
-  // input をリセット
-  const inp = $(inputId);
-  if (inp) inp.value = '';
-  // DR削除時は検出エリアのDR行も非表示
-  if (fileKey === 'dr') {
-    const drItem = $('detected-dr-item');
-    if (drItem) drItem.style.display = 'none';
-  }
-  updateStep1UI();
-  showToast('ファイルを削除しました', 'info');
-}
-
-function tryAutoDetect() {
-  // 両ファイルのいずれかからストア名・年月を取得
-  const source = AppState.reportFile || AppState.monthlyFile;
-  if (!source) return;
-  const info = parseFileNameInfo(source.name);
-  if (info.storeName) AppState.storeName = info.storeName;
-  if (info.periodYm) AppState.periodYm = info.periodYm;
-
-  // 表示更新
-  $('detected-store').textContent = AppState.storeName || '（検出できませんでした）';
-  $('detected-period').textContent = AppState.periodYm ? formatPeriodDisplay(AppState.periodYm) : '（検出できませんでした）';
-  show($('detected-info'));
-}
-
-function updateStep1UI() {
-  const btn = $('btn-step1-next');
-  btn.disabled = !(AppState.reportBuffer && AppState.monthlyBuffer);
-}
-
-// ==============================
-// ステップ2: 委託者情報取得
-// ==============================
-function setupStep2() {
-  $('btn-step2-back').addEventListener('click', () => goToStep(1));
-  $('btn-step2-next').addEventListener('click', () => goToStep(3));
-}
-
-async function runStep2() {
-  show($('step2-loading'));
-  hide($('contractors-list'));
-  hide($('step2-warnings'));
-  $('btn-step2-next').disabled = true;
-
-  try {
-    const { contractors: allPeople, warnings } = await parseReport(AppState.reportBuffer);
-    AppState.allPeople   = allPeople;
-    AppState.contractors = allPeople.filter(c => (c.role || '').includes('業務委託'));
-    AppState.parseWarnings = warnings;
-
-    // デバッグ用ログ（開発者ツールで確認可能）
-    console.log('[Step2] 全員:', JSON.stringify(allPeople.map(c => ({
-      name: c.name, role: c.role,
-      basicPayMan: c.basicPayMan, dailyPayYen: c.dailyPayYen,
-      companyName: c.companyName, representativeName: c.representativeName
-    })), null, 2));
-    if (warnings.length) console.warn('[Step2] 警告:', warnings);
-
-    renderContractorsTable(allPeople);
-    renderWarnings('step2-warnings', warnings);
-
-    // 業務委託者が1名以上いれば次へ進める
-    const contractorCount = AppState.contractors.length;
-    $('btn-step2-next').disabled = contractorCount === 0;
-
-    if (allPeople.length === 0) {
-      showToast('社員名簿に人員が見つかりませんでした', 'warning');
-    } else if (contractorCount === 0) {
-      showToast(`${allPeople.length}名を取得しましたが業務委託者が0名です`, 'warning');
-    } else {
-      showToast(`${allPeople.length}名を取得（うち業務委託: ${contractorCount}名）`, 'success');
-    }
-  } catch (e) {
-    console.error('Step2 error:', e);
-    showToast('業務報告書の解析でエラーが発生しました: ' + e.message, 'error');
-  } finally {
-    hide($('step2-loading'));
-  }
-}
-
-function renderContractorsTable(people) {
-  const wrap = $('contractors-list');
-  if (people.length === 0) {
-    wrap.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">社員名簿に人員が見つかりません</div>';
-    show(wrap);
+/**
+ * ファイル群を state に追加
+ */
+function handleFiles(newFiles, folderName) {
+  if (newFiles.length === 0) {
+    toast('Excelファイルが見つかりませんでした', 'warn');
     return;
   }
 
-  const headers = [
-    { label: '氏名',           key: 'name' },
-    { label: '名義カナ',       key: 'holderDisplay' },
-    { label: '役職',           key: 'roleDisplay' },
-    { label: '基本給',         key: 'basicPayManDisplay',    align: 'right' },
-    { label: '昇給希望額',     key: 'raiseRequestDisplay',   align: 'right' },
-    { label: '大入り',         key: 'oiriDisplay',           align: 'right' },
-    { label: '日払い',         key: 'dailyPayYenDisplay',    align: 'right' },
-    { label: '事務所レンタル', key: 'officeRentDisplay',     align: 'right' },
-    { label: 'その他',         key: 'otherDisplay' },
-    { label: '警告',           key: 'warningBadge' }
-  ];
-
-  const rowData = people.map(c => ({
-    ...c,
-    _isContractor:        (c.role || '').includes('業務委託'),
-    roleDisplay:          c.role || '（不明）',
-    basicPayManDisplay:   `${c.basicPayMan ?? 0}万円`,
-    raiseRequestDisplay:  (c.raiseRequestMan ?? 0) > 0 ? `${c.raiseRequestMan}万円` : '-',
-    oiriDisplay:          (c.oiriMan ?? 0) > 0 ? `${c.oiriMan}万円` : '-',
-    dailyPayYenDisplay:   (c.dailyPayYen ?? 0) > 0 ? formatYen(c.dailyPayYen) : '-',
-    officeRentDisplay:    (c.officeRentYen ?? 0) > 0 ? formatYen(c.officeRentYen) : '-',
-    otherDisplay:         (c.otherItems ?? []).length > 0
-                            ? c.otherItems.map(o => `${o.label}:${formatYen(o.amount)}`).join(' / ')
-                            : '-',
-    holderDisplay:        c.bank?.accountHolderKana || '-',
-    warningBadge:         (c.warnings?.length ?? 0) > 0 ? `⚠ ${c.warnings.length}件` : '✓'
-  }));
-
-  // タブ分け用: 業務委託 / その他（それ以外）
-  const contractors = rowData.filter(r => r._isContractor);
-  const others      = rowData.filter(r => !r._isContractor);
-
-  // 件数サマリー
-  const summary = document.createElement('div');
-  summary.style.cssText = 'padding:0.7rem 1rem; border-bottom:1px solid var(--border); display:flex; gap:1rem; align-items:center; font-size:0.78rem;';
-  summary.innerHTML = `
-    <span style="color:var(--text-muted)">合計 <strong style="color:var(--text-primary)">${rowData.length}名</strong></span>
-    <span class="badge badge-ok">業務委託 ${contractors.length}名</span>
-    <span class="badge badge-gray">その他 ${others.length}名</span>
-  `;
-
-  // テーブル生成ヘルパー
-  function buildPeopleTable(rows) {
-    const table = buildTable(headers, rows, row => {
-      const tr = document.createElement('tr');
-      headers.forEach(h => {
-        const td = document.createElement('td');
-        if (h.key === 'roleDisplay') {
-          const span = document.createElement('span');
-          span.className = row._isContractor ? 'badge badge-ok' : 'badge badge-gray';
-          span.textContent = row[h.key];
-          span.title = row[h.key];
-          td.style.whiteSpace = 'nowrap';
-          td.appendChild(span);
-        } else if (h.key === 'warningBadge') {
-          const span = document.createElement('span');
-          const hasWarn = (row.warnings?.length > 0);
-          span.className = hasWarn ? 'badge badge-warn' : 'badge badge-ok';
-          span.textContent = row[h.key];
-          td.appendChild(span);
-        } else if (h.key === 'name') {
-          td.textContent = row[h.key] ?? '';
-          td.style.fontWeight = '600';
-        } else if (h.key === 'otherDisplay') {
-          td.className = 'td-wrap';
-          td.textContent = (row[h.key] === null || row[h.key] === undefined) ? '' : row[h.key];
-        } else {
-          td.textContent = (row[h.key] === null || row[h.key] === undefined) ? '' : row[h.key];
-        }
-        if (h.align) td.style.textAlign = h.align;
-        tr.appendChild(td);
-      });
-      return tr;
-    });
-    return table;
+  if (folderName) {
+    state.folderName = folderName;
+    // ファイル名の自動設定
+    els.masterFileName.value = `【まとめ】${folderName}`;
+    els.agencyFilePrefix.value = folderName;
   }
 
-  // タブなし・全員を1枚テーブルで表示
-  wrap.innerHTML = '';
-  wrap.appendChild(summary);
-  if (rowData.length === 0) {
-    const empty = document.createElement('div');
-    empty.style.cssText = 'padding:1.5rem;text-align:center;color:var(--gray-400)';
-    empty.textContent = '社員名簿に人員が見つかりません';
-    wrap.appendChild(empty);
+  newFiles.forEach(file => {
+    if (state.files.some(f => f.name === file.name && f.size === file.size)) return; // 重複スキップ
+    state.files.push({ file, name: file.name, size: file.size, status: 'loading', wb: null, rows: [] });
+  });
+
+  renderFileList();
+  parseAllFiles();
+  sysLog(`FILES ADDED: ${newFiles.length}件`, 'ok');
+}
+
+/* ============================================================
+   RENDER FILE LIST
+   ============================================================ */
+function renderFileList() {
+  if (state.files.length === 0) {
+    els.uploadedFiles.style.display = 'none';
+    els.folderInfoBar.style.display = 'none';
+    return;
+  }
+
+  // フォルダバー
+  if (state.folderName) {
+    els.folderInfoBar.style.display = 'flex';
+    els.folderNameEl.textContent = state.folderName;
+    const xlsCount = state.files.length;
+    els.folderBadge.textContent = `Excel ${xlsCount}件`;
   } else {
-    wrap.appendChild(buildPeopleTable(rowData));
+    els.folderInfoBar.style.display = 'none';
   }
-  show(wrap);
+
+  els.uploadedFiles.style.display = 'block';
+  const ready = state.files.filter(f => f.status === 'ready').length;
+  els.uploadedTitle.textContent = `UPLOADED FILES (${ready}/${state.files.length} ready)`;
+
+  els.filesList.innerHTML = state.files.map((f, i) => `
+    <div class="file-item ${f.status}">
+      <span class="file-name">${escHtml(f.name)}</span>
+      <span class="file-size">${(f.size/1024).toFixed(1)}KB</span>
+      <span class="file-status">${f.status === 'ready' ? '✓ OK' : f.status === 'loading' ? '...' : '✗ ERR'}</span>
+    </div>
+  `).join('');
+
+  els.fileCount.textContent = state.files.length;
+  checkIntegrateReady();
 }
 
-function maskAccountDisplay(num) {
-  if (!num || num.length <= 4) return num;
-  return '*'.repeat(num.length - 4) + num.slice(-4);
+function checkIntegrateReady() {
+  const ready = state.files.filter(f => f.status === 'ready').length;
+  els.btnIntegrate.disabled = ready === 0;
+  if (ready > 0) {
+    els.uploadStatus.textContent = `${ready} FILE(S) READY`;
+  }
 }
 
-function renderWarnings(elementId, warnings) {
-  const el = $(elementId);
-  if (!warnings || warnings.length === 0) { hide(el); return; }
-  const errorWarnings = warnings.filter(w => w.level === 'error' || w.level === 'warn');
-  if (errorWarnings.length === 0) { hide(el); return; }
-
-  el.innerHTML = `
-    <h4><i class="fas fa-exclamation-triangle"></i> 確認事項（${errorWarnings.length}件）</h4>
-    <ul>${errorWarnings.map(w => `<li>${w.person ? `[${w.person}] ` : ''}${w.message}</li>`).join('')}</ul>
-  `;
-  show(el);
+function clearFiles() {
+  state.files = [];
+  state.folderName = '';
+  els.folderInfoBar.style.display = 'none';
+  els.uploadedFiles.style.display = 'none';
+  els.filesList.innerHTML = '';
+  els.btnIntegrate.disabled = true;
+  els.uploadStatus.textContent = 'WAITING INPUT';
+  els.fileCount.textContent = '0';
 }
 
-// ==============================
-// ステップ3: 日払い突合
-// ==============================
-function setupStep3() {
-  $('btn-step3-back').addEventListener('click', () => goToStep(2));
-  $('btn-step3-next').addEventListener('click', () => goToStep(4));
-}
+els.btnClearFiles.addEventListener('click', clearFiles);
 
-async function runStep3() {
-  show($('step3-loading'));
-  hide($('reconcile-list'));
-  hide($('dr-reconcile-list'));
-  hide($('reconcile-kpi'));
-
-  try {
-    // 月計表解析
-    const { dailyPayEntries, warnings } = await parseMonthly(AppState.monthlyBuffer);
-    AppState.dailyPayEntries = dailyPayEntries;
-    if (warnings.length > 0) warnings.forEach(w => console.warn('[月計表]', w.message));
-
-    // 業務委託 突合（allPeople 全員を渡して社員も表示、reconcile内でフラグ付与）
-    const results = reconcile(AppState.allPeople, dailyPayEntries);
-    AppState.reconcileResults = results;
-    renderReconcileTable(results);
-
-    // DR突合（DRファイルがある場合）
-    if (AppState.drBuffer) {
+/* ============================================================
+   PARSE EXCEL FILES
+   ============================================================ */
+function parseAllFiles() {
+  const pending = state.files.filter(f => f.status === 'loading');
+  let done = 0;
+  pending.forEach(entry => {
+    const reader = new FileReader();
+    reader.onload = e => {
       try {
-        const { drList, warnings: drW } = await parseDR(AppState.drBuffer);
-        AppState.drList = drList;
-        if (drW.length) drW.forEach(w => console.warn('[DR]', w.message));
-
-        const drResults = reconcileDR(drList, dailyPayEntries);
-        AppState.drReconcileResults = drResults;
-        renderDRReconcileTable(drResults);
-
-        // DRタブを表示
-        $('tab-dr-btn').style.display = '';
-        $('kpi-dr-card').style.display = '';
-        $('kpi-dr-count').textContent = drList.length;
-
-        const drNg = drResults.filter(r => r.status === 'NG').length;
-        showToast(`DR突合完了: ${drList.length}名 / NG ${drNg}件`, drNg > 0 ? 'warning' : 'success');
-      } catch (e) {
-        console.error('DR parse error:', e);
-        showToast('DRファイルの解析でエラー: ' + e.message, 'error');
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type: 'array', cellStyles: true, cellNF: true });
+        entry.wb = wb;
+        entry.rows = extractRows(wb);
+        entry.status = 'ready';
+        sysLog(`PARSED: ${entry.name} → ${entry.rows.length} rows`, 'ok');
+      } catch (err) {
+        entry.status = 'error';
+        sysLog(`PARSE ERROR: ${entry.name} — ${err.message}`, 'error');
+        toast(`${entry.name} の読み込みに失敗しました`, 'error');
       }
-    } else {
-      // DRなし時: 月計表にDR行があれば警告を表示
-      const drEntries = dailyPayEntries.filter(e => {
-        const raw = e.personRawLabel ?? '';
-        return raw.startsWith('DR') || raw.startsWith('ＤＲ');
-      });
-      if (drEntries.length > 0) {
-        // DRタブを表示して「未アップロード」メッセージを表示
-        $('tab-dr-btn').style.display = '';
-        $('kpi-dr-card').style.display = '';
-        $('kpi-dr-count').textContent = drEntries.length;
-        const drWrap = $('dr-reconcile-list');
-        drWrap.innerHTML = `
-          <div style="padding:1.5rem;background:#fff8e1;border-radius:8px;border-left:4px solid var(--warning)">
-            <p style="margin:0 0 0.5rem;font-weight:600"><i class="fas fa-exclamation-triangle" style="color:var(--warning)"></i> DRファイルが未アップロードです</p>
-            <p style="margin:0;font-size:0.9rem;color:var(--gray-600)">
-              月計表に以下のDR日払い行が見つかりました。DRファイルをアップロードして突合してください。
-            </p>
-            <ul style="margin:0.5rem 0 0;padding-left:1.5rem;font-size:0.9rem">
-              ${drEntries.map(e => `<li>${escapeHtml(e.personRawLabel)} — <strong>${formatYen(e.dailyPayYen)}</strong></li>`).join('')}
-            </ul>
-          </div>`;
-        show(drWrap);
-        showToast(`月計表に${drEntries.length}件のDR日払い行があります。DRファイルをアップロードしてください`, 'warning');
-      } else {
-        $('tab-dr-btn').style.display = 'none';
-        $('kpi-dr-card').style.display = 'none';
-      }
-    }
-
-    renderReconcileKPI(results);
-
-    const ngCount = results.filter(r => r.status === 'NG').length;
-    showToast(
-      ngCount > 0 ? `業務委託: ${ngCount}件のNG（要確認）` : '業務委託: すべて一致',
-      ngCount > 0 ? 'warning' : 'success'
-    );
-  } catch (e) {
-    console.error('Step3 error:', e);
-    showToast('日払い突合でエラーが発生しました: ' + e.message, 'error');
-  } finally {
-    hide($('step3-loading'));
-  }
-}
-
-function renderReconcileKPI(results) {
-  const staffNg = results.filter(r => r.status === 'NG').length;
-  const staffOk = results.filter(r => r.status === 'OK').length;
-  const drNg = (AppState.drReconcileResults || []).filter(r => r.status === 'NG').length;
-  const drOk = (AppState.drReconcileResults || []).filter(r => r.status === 'OK').length;
-  $('kpi-ok-count').textContent = staffOk + drOk;
-  $('kpi-ng-count').textContent = staffNg + drNg;
-  show($('reconcile-kpi'));
-}
-
-function renderReconcileTable(results) {
-  const wrap = $('reconcile-list');
-  if (results.length === 0) {
-    wrap.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">突合結果がありません</div>';
-    show(wrap);
-    return;
-  }
-
-  // サマリー（業務委託 / 社員 / 未登録）
-  const contractorCount = results.filter(r => r._isContractor && r.reportDailyPayYen !== null).length;
-  const employeeCount   = results.filter(r => !r._isContractor && r.reportDailyPayYen !== null).length;
-  const unmatchedCount  = results.filter(r => r.reportDailyPayYen === null).length;
-  const ngCount         = results.filter(r => r.status === 'NG').length;
-  const summary = document.createElement('div');
-  summary.style.cssText = 'padding:0.7rem 1rem; border-bottom:1px solid var(--border); display:flex; gap:1rem; align-items:center; flex-wrap:wrap; font-size:0.78rem;';
-  summary.innerHTML = `
-    <span class="badge badge-ok">業務委託 ${contractorCount}名</span>
-    <span class="badge badge-gray">社員 ${employeeCount}名</span>
-    ${unmatchedCount > 0 ? `<span class="badge badge-warn">名簿未登録 ${unmatchedCount}件</span>` : ''}
-    <span style="margin-left:auto" class="badge ${ngCount > 0 ? 'badge-ng' : 'badge-ok'}">NG ${ngCount}件</span>
-  `;
-
-  const table = document.createElement('table');
-  // ヘッダー
-  const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  ['氏名（業務報告書）', '区分', '月計表の科目（元データ）', '報告書 日払い', '月計表 日払い', '判定', '理由', '承認'].forEach(label => {
-    const th = document.createElement('th');
-    th.textContent = label;
-    headRow.appendChild(th);
+      done++;
+      renderFileList();
+      if (done === pending.length) checkIntegrateReady();
+    };
+    reader.readAsArrayBuffer(entry.file);
   });
-  thead.appendChild(headRow);
-  table.appendChild(thead);
+}
 
-  const tbody = document.createElement('tbody');
-  results.forEach((r, idx) => {
-    const tr = document.createElement('tr');
-    if (r.status === 'NG') tr.classList.add('row-ng');
-    // 社員行はミュート
-    if (!r._isContractor && r.reportDailyPayYen !== null) tr.style.opacity = '0.6';
+/**
+ * Excelから行データを抽出（背景色も保持）
+ * 構造: row1=タイトル, row2=空, row3=ヘッダー, row4~=データ
+ * 列: A=ブランド, B=カテゴリ, C=代理店, D=媒体, E=プラン, F=備考, G=金額
+ */
+function extractRows(wb) {
+  const rows = [];
+  wb.SheetNames.forEach(sheetName => {
+    const ws = wb.Sheets[sheetName];
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    const maxRow = range.e.r;
 
-    // 氏名列
-    const nameCell = document.createElement('td');
-    if (r.reportDailyPayYen === null) {
-      nameCell.innerHTML = `<span class="text-muted">${escapeHtml(r.name)}</span>
-        <br><span style="font-size:0.75rem;color:var(--warning)">業務報告書に未登録</span>`;
-    } else {
-      nameCell.textContent = r.name;
-      if (r._isContractor) nameCell.style.fontWeight = '700';
+    // ヘッダー行を自動検出（「ブランド」「代理店」などが含まれる行）
+    let headerRow = 2; // デフォルト row3 (0-indexed=2)
+    for (let r = 0; r <= Math.min(maxRow, 6); r++) {
+      const a = getCellVal(ws, r, 0);
+      const c = getCellVal(ws, r, 2);
+      if (String(a).includes('ブランド') || String(c).includes('代理店')) {
+        headerRow = r;
+        break;
+      }
     }
-    tr.appendChild(nameCell);
 
-    // 区分バッジ
-    const roleCell = document.createElement('td');
-    if (r.reportDailyPayYen === null) {
-      roleCell.innerHTML = '<span class="badge badge-warn">未登録</span>';
-    } else if (r._isContractor) {
-      roleCell.innerHTML = '<span class="badge badge-ok">委託</span>';
-    } else {
-      roleCell.innerHTML = '<span class="badge badge-gray">社員</span>';
+    // データ行: headerRow+1 から
+    for (let r = headerRow + 1; r <= maxRow; r++) {
+      const brand    = getCellVal(ws, r, 0);
+      const category = getCellVal(ws, r, 1);
+      const agency   = getCellVal(ws, r, 2);
+      const media    = getCellVal(ws, r, 3);
+      const plan     = getCellVal(ws, r, 4);
+      const note     = getCellVal(ws, r, 5);
+      const amount   = getCellVal(ws, r, 6);
+
+      // 空行をスキップ
+      if (!brand && !agency && !media) continue;
+
+      // 各列の背景色を取得
+      const cellColors = [];
+      for (let c = 0; c < 7; c++) {
+        cellColors.push(getCellBgColor(ws, r, c));
+      }
+
+      rows.push({
+        brand:    String(brand || ''),
+        category: String(category || ''),
+        agency:   String(agency || '').trim(),
+        media:    String(media || ''),
+        plan:     String(plan || ''),
+        note:     String(note || ''),
+        amount:   typeof amount === 'number' ? amount : (parseFloat(String(amount).replace(/[^\d.-]/g,'')) || 0),
+        _colors:  cellColors,
+        _src: sheetName,
+      });
     }
-    tr.appendChild(roleCell);
+  });
+  return rows;
+}
 
-    // 月計表の元データ
-    const rawLabelCell = document.createElement('td');
-    rawLabelCell.textContent = r.monthlyRawLabel || '-';
-    rawLabelCell.style.fontSize = '0.85rem';
-    rawLabelCell.style.color = 'var(--gray-500)';
-    tr.appendChild(rawLabelCell);
+function getCellVal(ws, r, c) {
+  const addr = XLSX.utils.encode_cell({r, c});
+  const cell = ws[addr];
+  if (!cell) return '';
+  if (cell.t === 'n') return cell.v;
+  return cell.v !== undefined ? cell.v : '';
+}
 
+/**
+ * セルの背景色を取得（6桁RGBまたはnull）
+ */
+function getCellBgColor(ws, r, c) {
+  const addr = XLSX.utils.encode_cell({r, c});
+  const cell = ws[addr];
+  if (!cell || !cell.s || !cell.s.fgColor) return null;
+  const fg = cell.s.fgColor;
 
-    // 報告書日払い
-    const reportCell = document.createElement('td');
-    reportCell.style.textAlign = 'right';
-    if (r.reportDailyPayYen === null) {
-      reportCell.innerHTML = '<span class="text-muted">—</span>';
-    } else {
-      reportCell.textContent = formatYen(r.reportDailyPayYen);
-    }
-    tr.appendChild(reportCell);
+  // theme色は無視 (rgb=undefined or "00000000")
+  if (!fg.rgb || fg.rgb === '00000000' || fg.rgb === 'FFFFFFFF') return null;
 
-    // 月計表日払い
-    const monthlyCell = document.createElement('td');
-    monthlyCell.style.textAlign = 'right';
-    monthlyCell.textContent = formatYen(r.monthlyDailyPayYen);
-    tr.appendChild(monthlyCell);
+  // 8桁(AARRGGBB) → 6桁(RRGGBB) に正規化
+  const rgb = fg.rgb.length === 8 ? fg.rgb.slice(2) : fg.rgb;
 
-    // 判定
-    const statusCell = document.createElement('td');
-    statusCell.innerHTML = r.status === 'OK'
-      ? '<span class="badge badge-ok"><i class="fas fa-check"></i> OK</span>'
-      : '<span class="badge badge-ng"><i class="fas fa-times"></i> NG</span>';
-    tr.appendChild(statusCell);
+  // 白・黒はnull扱い
+  if (rgb === 'FFFFFF' || rgb === '000000') return null;
+  return rgb;
+}
 
-    // 理由（折り返しあり）
-    const reasonCell = document.createElement('td');
-    reasonCell.className = 'td-wrap';
-    reasonCell.textContent = r.reason;
-    reasonCell.style.fontSize = '0.85rem';
-    tr.appendChild(reasonCell);
+/* ============================================================
+   INTEGRATE
+   ============================================================ */
+function integrateFiles() {
+  showLoading('INTEGRATING...', 'データを統合中');
+  setTimeout(() => {
+    try {
+      state.allRows = [];
+      state.files.filter(f => f.status === 'ready').forEach(f => {
+        f.rows.forEach(row => state.allRows.push({...row, _file: f.name}));
+      });
 
-    // 承認チェック（NGのみ）
-    const approveCell = document.createElement('td');
-    if (r.status === 'NG') {
-      const toggle = document.createElement('label');
-      toggle.className = 'approve-toggle';
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = r.isManualApproved;
-      checkbox.addEventListener('change', e => {
-        AppState.reconcileResults[idx].isManualApproved = e.target.checked;
-        if (e.target.checked) {
-          tr.classList.remove('row-ng');
-        } else {
-          tr.classList.add('row-ng');
+      if (state.allRows.length === 0) {
+        hideLoading();
+        toast('データが見つかりませんでした。ファイル形式を確認してください。', 'error');
+        return;
+      }
+
+      // 代理店一覧（出現順・重複なし）
+      state.agencies = [];
+      state.allRows.forEach(r => {
+        if (r.agency && !state.agencies.includes(r.agency)) {
+          state.agencies.push(r.agency);
         }
       });
-      const lbl = document.createElement('span');
-      lbl.textContent = '確認OK';
-      toggle.appendChild(checkbox);
-      toggle.appendChild(lbl);
-      approveCell.appendChild(toggle);
-    } else {
-      approveCell.innerHTML = '<span class="badge badge-ok">-</span>';
+
+      state.currentTab = 'all';
+      state.searchQuery = '';
+      state.sortCol = null;
+      state.page = 1;
+
+      els.rowCount.textContent = state.allRows.length;
+      sysLog(`INTEGRATED: ${state.allRows.length} rows, ${state.agencies.length} agencies`, 'ok');
+
+      hideLoading();
+      renderTabs();
+      renderTable();
+      renderExportPanel();
+
+      els.uploadPanel.style.display = 'none';
+      els.dataPanel.style.display = 'block';
+      els.exportPanel.style.display = 'block';
+      els.floatingActions.style.display = 'flex';
+
+      toast(`統合完了: ${state.allRows.length}行 / ${state.agencies.length}代理店`, 'success');
+    } catch(err) {
+      hideLoading();
+      toast('統合処理でエラーが発生しました: ' + err.message, 'error');
+      sysLog(`INTEGRATE ERROR: ${err.message}`, 'error');
     }
-    tr.appendChild(approveCell);
-
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-
-  wrap.innerHTML = '';
-  wrap.appendChild(summary);
-  wrap.appendChild(table);
-  show(wrap);
+  }, 300);
 }
 
-// ==============================
-// ステップ4: 前月差分チェック
-// ==============================
-function setupStep4() {
-  $('btn-step4-back').addEventListener('click', () => goToStep(3));
-  $('btn-step4-next').addEventListener('click', () => goToStep(5));
-}
-
-async function runStep4() {
-  try {
-    // ── 業務委託 スナップショット保存・差分チェック ──
-    // allPeople（全員）＋突合結果を一緒に保存
-    await saveSnapshot(AppState.allPeople, AppState.storeName, AppState.periodYm, AppState.reconcileResults);
-    const prevContractors = await getPrevSnapshot(AppState.storeName, AppState.periodYm);
-    AppState.prevContractors = prevContractors;
-
-    let diffResults;
-    if (prevContractors.length === 0) {
-      diffResults = checkDiffFirstTime(AppState.allPeople);
-    } else {
-      diffResults = checkDiff(AppState.allPeople, prevContractors);
-    }
-    AppState.diffResults = diffResults;
-    renderDiffTable('diff-staff-list', diffResults, prevContractors.length === 0, AppState.contractors, 'contractors');
-
-    // ── DR スナップショット保存・差分チェック ──
-    if (AppState.drList && AppState.drList.length > 0) {
-      await saveDRSnapshot(AppState.drList, AppState.storeName, AppState.periodYm, AppState.drReconcileResults);
-      const prevDrList = await getPrevDRSnapshot(AppState.storeName, AppState.periodYm);
-      AppState.prevDrList = prevDrList;
-
-      let drDiffResults;
-      if (prevDrList.length === 0) {
-        drDiffResults = checkDRDiffFirstTime(AppState.drList);
-      } else {
-        drDiffResults = checkDRDiff(AppState.drList, prevDrList);
-      }
-      AppState.drDiffResults = drDiffResults;
-      renderDiffTable('diff-dr-list', drDiffResults, prevDrList.length === 0, AppState.drList, 'drList');
-
-      // DRタブを表示
-      $('tab-diff-dr-btn').style.display = '';
-      const drAlerts = drDiffResults.filter(r => r.severity === 'alert').length;
-      if (drAlerts > 0) showToast(`DR差分: ${drAlerts}件の要確認項目があります`, 'warning');
-    } else {
-      $('tab-diff-dr-btn').style.display = 'none';
-      const drWrap = $('diff-dr-list');
-      drWrap.innerHTML = '<div style="padding:1rem;color:var(--gray-400)">DRファイルが未アップロードのため、DR差分チェックをスキップしました。</div>';
-    }
-
-    const alerts = diffResults.filter(r => r.severity === 'alert').length;
-    if (alerts > 0) showToast(`業務委託差分: ${alerts}件の要確認項目があります`, 'warning');
-    else showToast('前月差分チェック完了', 'success');
-
-    // スナップショット一覧を更新（AI-Drive書き込み完了を待つ）
-    setTimeout(() => loadSnapshotList(), 3000);
-
-  } catch (e) {
-    console.error('Step4 error:', e);
-    $('diff-staff-list').innerHTML = '<div style="padding:1rem;color:var(--danger)">前月差分チェックでエラーが発生しました: ' + e.message + '</div>';
-    showToast('前月差分チェックでエラーが発生しました', 'error');
-  }
-}
-
-function renderDiffTable(wrapperId, results, isFirstTime, currentList, stateKey) {
-  const wrap = $(wrapperId);
-
-  if (isFirstTime) {
-    const summaryHtml = stateKey === 'drList'
-      ? buildDRSummary(currentList)
-      : buildContractorSummary(currentList);
-    wrap.innerHTML = `
-      <div style="padding:1.5rem">
-        <div class="badge badge-info" style="margin-bottom:0.5rem"><i class="fas fa-info-circle"></i> 初回登録</div>
-        <p style="font-size:0.9rem;color:var(--gray-600);margin-top:0.5rem">前月のデータがないため、今月のデータを登録しました。次月から差分チェックが有効になります。</p>
-        ${summaryHtml}
-      </div>`;
-    show(wrap);
-    return;
-  }
-
-  if (results.length === 0) {
-    wrap.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">差分なし</div>';
-    return;
-  }
-
-  const table = document.createElement('table');
-  const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  ['氏名', '変更種別', '変更前', '変更後', '詳細', '承認'].forEach(label => {
-    const th = document.createElement('th');
-    th.textContent = label;
-    headRow.appendChild(th);
-  });
-  thead.appendChild(headRow);
-  table.appendChild(thead);
-
-  const tbody = document.createElement('tbody');
-  results.forEach((r, idx) => {
-    const tr = document.createElement('tr');
-
-    [
-      r.name,
-    ].forEach(text => {
-      const td = document.createElement('td');
-      td.textContent = text;
-      tr.appendChild(td);
-    });
-
-    // 変更種別バッジ
-    const typeTd = document.createElement('td');
-    const badgeClass = r.severity === 'alert' ? 'badge-ng' : r.severity === 'info' ? 'badge-info' : 'badge-ok';
-    typeTd.innerHTML = `<span class="badge ${badgeClass}">${r.label}</span>`;
-    tr.appendChild(typeTd);
-
-    // 変更前
-    const beforeTd = document.createElement('td');
-    beforeTd.textContent = r.before ?? '-';
-    beforeTd.style.fontSize = '0.85rem';
-    tr.appendChild(beforeTd);
-
-    // 変更後
-    const afterTd = document.createElement('td');
-    afterTd.textContent = r.after ?? '-';
-    afterTd.style.fontSize = '0.85rem';
-    tr.appendChild(afterTd);
-
-    // 詳細
-    const detailTd = document.createElement('td');
-    detailTd.textContent = r.details;
-    detailTd.style.fontSize = '0.82rem';
-    detailTd.style.color = 'var(--gray-500)';
-    tr.appendChild(detailTd);
-
-    // 承認（alertのみ）
-    const approveTd = document.createElement('td');
-    if (r.severity === 'alert') {
-      const toggle = document.createElement('label');
-      toggle.className = 'approve-toggle';
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = r.isManualApproved;
-      checkbox.addEventListener('change', e => {
-        const arr = stateKey === 'drList' ? AppState.drDiffResults : AppState.diffResults;
-        if (arr[idx]) arr[idx].isManualApproved = e.target.checked;
-      });
-      const lbl = document.createElement('span');
-      lbl.textContent = '確認OK';
-      toggle.appendChild(checkbox);
-      toggle.appendChild(lbl);
-      approveTd.appendChild(toggle);
-    } else {
-      approveTd.innerHTML = '<span class="badge badge-gray">-</span>';
-    }
-    tr.appendChild(approveTd);
-
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-
-  wrap.innerHTML = '';
-  wrap.appendChild(table);
-  show(wrap);
-}
-
-function buildDRSummary(drList) {
-  if (!drList || drList.length === 0) return '';
-  return `<table style="margin-top:1rem;width:100%;border-collapse:collapse;font-size:0.9rem">
-    <thead><tr>
-      <th style="text-align:left;padding:6px;border-bottom:1px solid var(--gray-200)">氏名</th>
-      <th style="text-align:right;padding:6px;border-bottom:1px solid var(--gray-200)">ドライバー報酬</th>
-      <th style="text-align:right;padding:6px;border-bottom:1px solid var(--gray-200)">仮払（日払い）</th>
-      <th style="text-align:right;padding:6px;border-bottom:1px solid var(--gray-200)">合計</th>
-    </tr></thead>
-    <tbody>${drList.map(dr => `<tr>
-      <td style="padding:6px;border-bottom:1px solid var(--gray-100)">${escapeHtml(dr.name)}</td>
-      <td style="padding:6px;text-align:right;border-bottom:1px solid var(--gray-100)">${formatYen(dr.driverReward)}</td>
-      <td style="padding:6px;text-align:right;border-bottom:1px solid var(--gray-100)">${formatYen(dr.karibaraiYen)}</td>
-      <td style="padding:6px;text-align:right;border-bottom:1px solid var(--gray-100)">${formatYen(dr.totalAmount)}</td>
-    </tr>`).join('')}</tbody>
-  </table>`;
-}
-
-function buildContractorSummary(contractors) {
-  return `<table style="margin-top:1rem;width:100%;border-collapse:collapse;font-size:0.9rem">
-    <thead><tr>
-      <th style="text-align:left;padding:6px;border-bottom:1px solid var(--gray-200)">氏名</th>
-      <th style="text-align:right;padding:6px;border-bottom:1px solid var(--gray-200)">基本給</th>
-      <th style="text-align:right;padding:6px;border-bottom:1px solid var(--gray-200)">日払い</th>
-    </tr></thead>
-    <tbody>${contractors.map(c => `<tr>
-      <td style="padding:6px;border-bottom:1px solid var(--gray-100)">${escapeHtml(c.name)}</td>
-      <td style="padding:6px;text-align:right;border-bottom:1px solid var(--gray-100)">${c.basicPayMan}万円</td>
-      <td style="padding:6px;text-align:right;border-bottom:1px solid var(--gray-100)">${formatYen(c.dailyPayYen)}</td>
-    </tr>`).join('')}</tbody>
-  </table>`;
-}
-
-// ==============================
-// ステップ5: 出力
-// ==============================
-function setupStep5() {
-  $('btn-step5-back').addEventListener('click', () => goToStep(4));
-  $('btn-step5-download').addEventListener('click', handleDownload);
-  $('btn-step5-dr-download').addEventListener('click', handleDRDownload);
-  $('btn-step5-bulk-download').addEventListener('click', handleBulkDownload);
-  $('btn-step5-restart').addEventListener('click', () => goToStep(1));
-}
-
-function runStep5() {
-  // DRファイルがある場合のみDRダウンロード・一括ダウンロードボタンを表示
-  if (AppState.drBuffer) {
-    $('btn-step5-dr-download').style.display = '';
-    $('btn-step5-bulk-download').style.display = '';
-  } else {
-    $('btn-step5-dr-download').style.display = 'none';
-    $('btn-step5-bulk-download').style.display = 'none';
-  }
-}
-
-function renderInvoicePreview(wrapperId, rows, total, isDR) {
-  const wrap = $(wrapperId);
-  if (!wrap) return;
-  if (rows.length === 0) {
-    wrap.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">データがありません</div>';
-    show(wrap);
-    return;
-  }
-
-  const table = document.createElement('table');
-  const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  ['氏名', '種別', '金額', ''].forEach(label => {
-    const th = document.createElement('th');
-    th.textContent = label;
-    headRow.appendChild(th);
-  });
-  thead.appendChild(headRow);
-  table.appendChild(thead);
-
-  const tbody = document.createElement('tbody');
-  rows.forEach(r => {
-    const tr = document.createElement('tr');
-    if (r.isSubtotal) {
-      tr.style.background = '#f0f9ff';
-      tr.style.fontWeight = 'bold';
-    }
-    [r.name, r.desc,
-      r.amount === 0 ? '¥0' : formatYen(r.amount),
-      r.isSubtotal ? '← 合計' : ''
-    ].forEach(v => {
-      const td = document.createElement('td');
-      td.textContent = v;
-      if (typeof r.amount === 'number' && v === formatYen(r.amount)) td.style.textAlign = 'right';
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-
-  // 合計行
-  const totalTr = document.createElement('tr');
-  totalTr.style.background = '#e0f2fe';
-  totalTr.style.fontWeight = 'bold';
-  totalTr.style.fontSize = '1.05em';
-  ['', '総合計', formatYen(total), ''].forEach(v => {
-    const td = document.createElement('td');
-    td.textContent = v;
-    if (v === formatYen(total)) td.style.textAlign = 'right';
-    totalTr.appendChild(td);
-  });
-  tbody.appendChild(totalTr);
-
-  wrap.innerHTML = '';
-  wrap.appendChild(table);
-  show(wrap);
-}
-
-async function handleDownload() {
-  const btn = $('btn-step5-download');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 生成中...';
-
-  try {
-    const { fileName, copied } = await generateAndDownloadInvoice(
-      AppState.contractors,
-      AppState.reportBuffer,
-      AppState.storeName,
-      AppState.periodYm
-    );
-    showToast(`ダウンロード完了: ${fileName}（${copied}名）`, 'success');
-  } catch (e) {
-    console.error('Download error:', e);
-    showToast('Excel生成でエラーが発生しました: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-download"></i> 内勤請求Excelをダウンロード';
-  }
-}
-
-async function handleBulkDownload() {
-  // 業務委託・DRを連続してダウンロード
-  await handleDownload();
-  if (AppState.drFile) await handleDRDownload();
-}
-
-async function handleDRDownload() {
-  const btn = $('btn-step5-dr-download');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 生成中...';
-
-  try {
-    const { fileName, copied } = await generateAndDownloadDRInvoice(
-      AppState.drList,
-      AppState.drBuffer,
-      AppState.storeName,
-      AppState.periodYm
-    );
-    showToast(`ダウンロード完了: ${fileName}（${copied}名）`, 'success');
-  } catch (e) {
-    console.error('DR Download error:', e);
-    showToast('DR請求Excel生成でエラーが発生しました: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-car"></i> DR請求Excelをダウンロード';
-  }
-}
-
-// ==============================
-// ステップナビゲーション
-// ==============================
-function goToStep(step) {
-  // 現在のステップを非表示
-  const current = $(`step-${AppState.currentStep}`);
-  if (current) current.classList.remove('active');
-
-  // ステップナビ更新
-  document.querySelectorAll('.step-item').forEach(item => {
-    const s = parseInt(item.dataset.step);
-    item.classList.remove('active', 'done');
-    if (s < step) item.classList.add('done');
-    else if (s === step) item.classList.add('active');
-  });
-
-  // 新しいステップを表示
-  const next = $(`step-${step}`);
-  if (next) next.classList.add('active');
-
-  AppState.currentStep = step;
-  window.scrollTo(0, 0);
-
-  // ステップ固有の処理
-  if (step === 2) runStep2();
-  else if (step === 3) runStep3();
-  else if (step === 4) runStep4();
-  else if (step === 5) runStep5();
-}
-
-// ==============================
-// タブ切り替え
-// ==============================
-function setupTabs() {
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const targetId = btn.dataset.tab;
-      // ボタン
-      btn.closest('.tab-bar').querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      // コンテンツ
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      const target = $(targetId);
-      if (target) target.classList.add('active');
-    });
-  });
-}
-
-// ==============================
-// DR 突合テーブル描画
-// ==============================
-function renderDRReconcileTable(results) {
-  const wrap = $('dr-reconcile-list');
-  if (!results || results.length === 0) {
-    wrap.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--gray-400)">DR突合結果がありません</div>';
-    show(wrap);
-    return;
-  }
-
-  const table = document.createElement('table');
-  const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  ['DRタブ名', '氏名', '月計表の科目（元データ）', 'DRファイル仮払', '月計表 日払い', 'ドライバー報酬', '２％チェック', '判定', '理由', '承認'].forEach(label => {
-    const th = document.createElement('th');
-    th.textContent = label;
-    headRow.appendChild(th);
-  });
-  thead.appendChild(headRow);
-  table.appendChild(thead);
-
-  const tbody = document.createElement('tbody');
-  results.forEach((r, idx) => {
-    const tr = document.createElement('tr');
-    if (r.status === 'NG') tr.classList.add('row-dr-ng');
-
-    // タブ名
-    const sheetTd = document.createElement('td');
-    sheetTd.textContent = r.sheetName || '—';
-    sheetTd.style.fontSize = '0.85rem';
-    tr.appendChild(sheetTd);
-
-    // 氏名
-    const nameTd = document.createElement('td');
-    if (r.drKaribaraiYen === null) {
-      nameTd.innerHTML = `<span class="text-muted">${escapeHtml(r.name)}</span><br><span style="font-size:0.75rem;color:var(--warning)">DRファイルに未登録</span>`;
-    } else {
-      nameTd.textContent = r.name;
-    }
-    tr.appendChild(nameTd);
-
-    // 月計表元ラベル
-    const rawTd = document.createElement('td');
-    rawTd.textContent = r.monthlyRawLabel || '-';
-    rawTd.style.fontSize = '0.85rem';
-    rawTd.style.color = 'var(--gray-500)';
-    tr.appendChild(rawTd);
-
-    // DRファイル仮払
-    const kariTd = document.createElement('td');
-    kariTd.style.textAlign = 'right';
-    kariTd.textContent = r.drKaribaraiYen === null ? '—' : formatYen(r.drKaribaraiYen);
-    tr.appendChild(kariTd);
-
-    // 月計表日払い
-    const monthlyTd = document.createElement('td');
-    monthlyTd.style.textAlign = 'right';
-    monthlyTd.textContent = formatYen(r.monthlyDailyPayYen);
-    tr.appendChild(monthlyTd);
-
-    // ドライバー報酬
-    const rewardTd = document.createElement('td');
-    rewardTd.style.textAlign = 'right';
-    rewardTd.textContent = r.driverReward !== null ? formatYen(r.driverReward) : '—';
-    tr.appendChild(rewardTd);
-
-    // 適格請求支払手数料チェック
-    const feeTd = document.createElement('td');
-    feeTd.style.textAlign = 'center';
-    if (!r.feeCheck) {
-      feeTd.innerHTML = '<span class="badge badge-gray">—</span>';
-    } else if (r.feeCheck.ok) {
-      feeTd.innerHTML = `<span class="badge badge-ok"><i class="fas fa-check"></i> OK</span>
-        <div style="font-size:0.75rem;color:var(--gray-500);margin-top:2px">${formatYen(r.feeCheck.actual)}</div>`;
-    } else {
-      feeTd.innerHTML = `<span class="badge badge-ng"><i class="fas fa-times"></i> NG</span>
-        <div style="font-size:0.75rem;color:var(--danger);margin-top:2px">実: ${formatYen(r.feeCheck.actual)} / 期待: ${formatYen(r.feeCheck.expected)}</div>`;
-    }
-    tr.appendChild(feeTd);
-
-    // 判定
-    const statusTd = document.createElement('td');
-    statusTd.innerHTML = r.status === 'OK'
-      ? '<span class="badge badge-ok"><i class="fas fa-check"></i> OK</span>'
-      : '<span class="badge badge-ng"><i class="fas fa-times"></i> NG</span>';
-    tr.appendChild(statusTd);
-
-    // 理由（折り返しあり）
-    const reasonTd = document.createElement('td');
-    reasonTd.className = 'td-wrap';
-    reasonTd.textContent = r.reason;
-    reasonTd.style.fontSize = '0.85rem';
-    tr.appendChild(reasonTd);
-
-    // 承認チェック（NGのみ）
-    const approveTd = document.createElement('td');
-    if (r.status === 'NG') {
-      const toggle = document.createElement('label');
-      toggle.className = 'approve-toggle';
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = r.isManualApproved;
-      checkbox.addEventListener('change', e => {
-        AppState.drReconcileResults[idx].isManualApproved = e.target.checked;
-        if (e.target.checked) tr.classList.remove('row-dr-ng');
-        else tr.classList.add('row-dr-ng');
-      });
-      const lbl = document.createElement('span');
-      lbl.textContent = '確認OK';
-      toggle.appendChild(checkbox);
-      toggle.appendChild(lbl);
-      approveTd.appendChild(toggle);
-    } else {
-      approveTd.innerHTML = '<span class="badge badge-ok">-</span>';
-    }
-    tr.appendChild(approveTd);
-
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  wrap.innerHTML = '';
-  wrap.appendChild(table);
-  show(wrap);
-}
-
-// ==============================
-// リセット
-// ==============================
-function setupReset() {
-  // 全消去ボタンは廃止 → 選択削除UIに移行
-  setupSnapshotSelectDelete();
-}
-
-// ==============================
-// スナップショット選択削除
-// ==============================
-function setupSnapshotSelectDelete() {
-  const selectBtn = $('btn-snapshot-select-delete');
-  const runBtn    = $('btn-snapshot-delete-run');
-  const cancelBtn = $('btn-snapshot-delete-cancel');
-  if (!selectBtn) return;
-
-  function enterSelectMode() {
-    selectBtn.style.display  = 'none';
-    runBtn.style.display     = '';
-    cancelBtn.style.display  = '';
-    runBtn.disabled = true;
-    // 各チップにチェックボックスを追加
-    document.querySelectorAll('.snapshot-chip-wrap').forEach(wrap => {
-      wrap.style.cursor = 'pointer';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.className = 'snapshot-select-checkbox';
-      cb.addEventListener('change', () => {
-        wrap.classList.toggle('selected', cb.checked);
-        updateDeleteBtn();
-      });
-      wrap.insertBefore(cb, wrap.firstChild);
-    });
-  }
-
-  function exitSelectMode() {
-    selectBtn.style.display  = '';
-    runBtn.style.display     = 'none';
-    cancelBtn.style.display  = 'none';
-    document.querySelectorAll('.snapshot-chip-wrap').forEach(wrap => {
-      wrap.classList.remove('selected');
-      wrap.style.cursor = '';
-      const cb = wrap.querySelector('.snapshot-select-checkbox');
-      if (cb) cb.remove();
-    });
-  }
-
-  function updateDeleteBtn() {
-    const checked = document.querySelectorAll('.snapshot-select-checkbox:checked').length;
-    runBtn.disabled = checked === 0;
-    runBtn.innerHTML = checked > 0
-      ? `<i class="fas fa-trash-alt"></i> ${checked}件を削除`
-      : '<i class="fas fa-trash-alt"></i> 削除する';
-  }
-
-  selectBtn.addEventListener('click', () => enterSelectMode());
-  cancelBtn.addEventListener('click', () => exitSelectMode());
-
-  runBtn.addEventListener('click', async () => {
-    const selected = [...document.querySelectorAll('.snapshot-chip-wrap.selected')];
-    if (selected.length === 0) return;
-
-    const targets = selected.map(wrap => ({
-      storeName: wrap.dataset.storeName,
-      periodYm:  wrap.dataset.periodYm,
-      label:     wrap.dataset.label,
-    }));
-
-    const names = targets.map(t => `・${t.label} / ${t.storeName}`).join('\n');
-    if (!confirmDialog(`以下のスナップショットを削除しますか？\n\n${names}`)) return;
-
-    try {
-      showToast('削除中...', 'info');
-      await Promise.all(targets.flatMap(t => [
-        deleteSnapshotsByStorePeriod(t.storeName, t.periodYm),
-        deleteDRSnapshotsByStorePeriod(t.storeName, t.periodYm),
-      ]));
-      exitSelectMode();
-      await loadSnapshotList();
-      showToast(`${targets.length}件のスナップショットを削除しました`, 'success');
-    } catch (e) {
-      showToast('削除に失敗しました: ' + e.message, 'error');
-    }
-  });
-}
-
-// ==============================
-// スナップショット一覧表示
-// ==============================
-async function loadSnapshotList() {
-  const listEl   = $('snapshot-list');
-  const statusEl = $('snapshot-status');
-  if (!listEl) return;
-
-  listEl.innerHTML = '<div class="snapshot-empty"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>';
-
-  try {
-    // IndexedDB から両テーブルを取得
-    const { staffRows, drRows } = await getAllSnapshotRows();
-
-    // 年月単位でグループ化
-    // periodGroups[periodYm][storeName] = { staffCount, drCount }
-    const periodGroups = {};
-    for (const r of staffRows) {
-      if (!periodGroups[r.period_ym]) periodGroups[r.period_ym] = {};
-      if (!periodGroups[r.period_ym][r.store_name]) periodGroups[r.period_ym][r.store_name] = { staffCount: 0, drCount: 0 };
-      periodGroups[r.period_ym][r.store_name].staffCount++;
-    }
-    for (const r of drRows) {
-      if (!periodGroups[r.period_ym]) periodGroups[r.period_ym] = {};
-      if (!periodGroups[r.period_ym][r.store_name]) periodGroups[r.period_ym][r.store_name] = { staffCount: 0, drCount: 0 };
-      periodGroups[r.period_ym][r.store_name].drCount++;
-    }
-
-    const periods = Object.keys(periodGroups).sort((a, b) => b.localeCompare(a));
-
-    if (periods.length === 0) {
-      listEl.innerHTML = '<div class="snapshot-empty">[ NO DATA ] 保存済みスナップショットはありません</div>';
-      if (statusEl) statusEl.textContent = '0 records';
-      return;
-    }
-
-    const totalStores = Object.values(periodGroups).reduce((n, g) => n + Object.keys(g).length, 0);
-    if (statusEl) statusEl.textContent = `${periods.length} period(s) / ${totalStores} store(s)`;
-
-    listEl.innerHTML = '';
-    for (const periodYm of periods) {
-      const stores = periodGroups[periodYm];
-      const storeNames = Object.keys(stores).sort();
-      const [y, m] = (periodYm || '').split('-');
-      const periodLabel = y && m ? `${y}年${m}月` : periodYm;
-
-      const row = document.createElement('div');
-      row.className = 'snapshot-row';
-      row.dataset.periodYm = periodYm;
-      row.dataset.label    = periodLabel;
-
-      // 年月ラベル
-      const periodSpan = document.createElement('span');
-      periodSpan.className = 'snapshot-period';
-      periodSpan.textContent = periodLabel;
-      row.appendChild(periodSpan);
-
-      // 店舗チップ群
-      const storesWrap = document.createElement('span');
-      storesWrap.className = 'snapshot-stores';
-
-      for (const storeName of storeNames) {
-        const chipWrap = document.createElement('span');
-        chipWrap.className = 'snapshot-chip-wrap';
-        chipWrap.dataset.storeName = storeName;
-        chipWrap.dataset.periodYm  = periodYm;
-        chipWrap.dataset.label     = periodLabel;
-        chipWrap.style.display = 'inline-flex';
-        chipWrap.style.alignItems = 'center';
-
-        const chip = document.createElement('span');
-        chip.className = 'snapshot-store-chip';
-        chip.innerHTML = `<i class="fas fa-store"></i> ${escapeHtml(storeName || '店舗名不明')}`;
-        chip.title = `${periodLabel} / ${storeName} — クリックして詳細表示`;
-        chip.addEventListener('click', (e) => {
-          e.stopPropagation();
-          // 選択モード中はチェック切り替え
-          if (chipWrap.querySelector('.snapshot-select-checkbox')) {
-            const cb = chipWrap.querySelector('.snapshot-select-checkbox');
-            cb.checked = !cb.checked;
-            chipWrap.classList.toggle('selected', cb.checked);
-            updateDeleteBtn();
-            return;
-          }
-          openSnapshotModal(storeName, periodYm, periodLabel);
-        });
-        chipWrap.appendChild(chip);
-        storesWrap.appendChild(chipWrap);
-      }
-
-      row.appendChild(storesWrap);
-      listEl.appendChild(row);
-    }
-  } catch (e) {
-    console.error('スナップショット一覧取得エラー:', e);
-    listEl.innerHTML = '<div class="snapshot-empty">[ ERROR ] データの読み込みに失敗しました</div>';
-    if (statusEl) statusEl.textContent = 'error';
-  }
-}
-
-// ==============================
-// スナップショット詳細モーダル
-// ==============================
-function setupSnapshotModal() {
-  const overlay = $('snapshot-modal');
-  const closeBtn = $('snap-modal-close');
-
-  closeBtn.addEventListener('click', () => { overlay.style.display = 'none'; });
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.style.display = 'none'; });
-
-  // タブ切り替え
-  overlay.querySelectorAll('.snap-tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      overlay.querySelectorAll('.snap-tab-btn').forEach(b => b.classList.remove('active'));
-      overlay.querySelectorAll('.snap-tab-content').forEach(c => c.classList.remove('active'));
-      btn.classList.add('active');
-      const target = $(btn.dataset.snapTab);
-      if (target) target.classList.add('active');
-    });
-  });
-}
-
-async function openSnapshotModal(storeName, periodYm, periodLabel) {
-  const overlay = $('snapshot-modal');
-  $('snap-modal-title').textContent = `${periodLabel}  //  ${storeName}`;
-  $('snap-modal-sub').textContent   = `STORE: ${storeName}  |  PERIOD: ${periodYm}`;
-
-  // タブを委託者情報に戻す
-  document.querySelectorAll('.snap-tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.snap-tab-content').forEach(c => c.classList.remove('active'));
-  document.querySelector('.snap-tab-btn[data-snap-tab="snap-tab-people"]').classList.add('active');
-  $('snap-tab-people').classList.add('active');
-
-  // ローディング表示
-  ['snap-tab-people', 'snap-tab-reconcile', 'snap-tab-diff'].forEach(id => {
-    $(id).innerHTML = '<div style="padding:1.5rem;text-align:center;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>';
-  });
-  overlay.style.display = 'flex';
-
-  try {
-    // IndexedDB から該当レコード取得
-    const { staffRows: allStaff, drRows: allDR } = await getAllSnapshotRows();
-    const allRows = allStaff.filter(r => r.store_name === storeName && r.period_ym === periodYm);
-    const drRows  = allDR.filter(r => r.store_name === storeName && r.period_ym === periodYm);
-
-    // 前月スナップショット（差分用）
-    const [y, mo] = periodYm.split('-').map(Number);
-    let prevY = y, prevMo = mo - 1;
-    if (prevMo < 1) { prevMo = 12; prevY--; }
-    const prevYm  = `${prevY}-${String(prevMo).padStart(2, '0')}`;
-    const prevRows   = allStaff.filter(r => r.store_name === storeName && r.period_ym === prevYm);
-    const prevDrRows = allDR.filter(r => r.store_name === storeName && r.period_ym === prevYm);
-
-    renderSnapPeopleTab(allRows);
-    renderSnapReconcileTab(allRows, drRows);
-    renderSnapDiffTab(allRows, prevRows, prevYm, drRows, prevDrRows);
-
-  } catch (e) {
-    console.error('モーダルデータ取得エラー:', e);
-    $('snap-tab-people').innerHTML = `<div style="padding:1rem;color:var(--danger)">データ取得エラー: ${e.message}</div>`;
-  }
-}
-
-function renderSnapPeopleTab(rows) {
-  const el = $('snap-tab-people');
-  if (!rows.length) { el.innerHTML = '<div style="padding:1rem;color:var(--text-muted)">データがありません</div>'; return; }
-
-  // ステップ2と同じ並び順・項目で表示
-  // 業務委託を上、社員を下にソート
-  const sorted = [...rows].sort((a, b) => {
-    const aIsC = (a.role || '').includes('業務委託');
-    const bIsC = (b.role || '').includes('業務委託');
-    if (aIsC && !bIsC) return -1;
-    if (!aIsC && bIsC) return 1;
-    return 0;
-  });
-
-  // サマリーバー
-  const contractorCount = sorted.filter(r => (r.role || '').includes('業務委託')).length;
-  const employeeCount   = sorted.length - contractorCount;
-  const summary = document.createElement('div');
-  summary.style.cssText = 'padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);display:flex;gap:0.75rem;align-items:center;font-size:0.72rem;margin-bottom:0.5rem;';
-  summary.innerHTML = `
-    <span style="color:var(--text-muted)">合計 <strong style="color:var(--text-primary)">${sorted.length}名</strong></span>
-    <span class="badge badge-ok">業務委託 ${contractorCount}名</span>
-    <span class="badge badge-gray">社員 ${employeeCount}名</span>
+els.btnIntegrate.addEventListener('click', integrateFiles);
+
+/* ============================================================
+   TABS
+   ============================================================ */
+function renderTabs() {
+  const nav = els.tabNav;
+  // 全データ + 代理店タブ
+  nav.innerHTML = `
+    <button class="tab-btn ${state.currentTab === 'all' ? 'active' : ''}" data-tab="all">
+      <span class="tab-icon">◈</span>全データ
+    </button>
+    ${state.agencies.map(ag => `
+      <button class="tab-btn ${state.currentTab === ag ? 'active' : ''}" data-tab="${escHtml(ag)}">
+        <span class="tab-icon">▷</span>${escHtml(ag)}
+      </button>
+    `).join('')}
   `;
-
-  // テーブル（ステップ2と同じ列順）
-  // 氏名 / 名義カナ / 役職 / 基本給 / 昇給希望額 / 大入り / 日払い / 事務所レンタル / その他 / 警告
-  const t = document.createElement('table');
-  t.innerHTML = `<thead><tr>
-    <th>氏名</th>
-    <th>名義カナ</th>
-    <th>役職</th>
-    <th style="text-align:right">基本給</th>
-    <th style="text-align:right">昇給希望額</th>
-    <th style="text-align:right">大入り</th>
-    <th style="text-align:right">日払い</th>
-    <th style="text-align:right">事務所レンタル</th>
-    <th>その他</th>
-    <th>警告</th>
-  </tr></thead>`;
-  const tb = document.createElement('tbody');
-
-  for (const r of sorted) {
-    const isContractor = (r.role || '').includes('業務委託');
-    const tr = document.createElement('tr');
-    if (!isContractor) tr.classList.add('snap-row-employee');
-
-    const otherItems = JSON.parse(r.other_items_json || '[]');
-    const otherText  = otherItems.length
-      ? otherItems.map(o => `${o.label}:${formatYen(o.amount)}`).join(' / ')
-      : '-';
-    const warnCount = JSON.parse(r.warnings_json || '[]').length;
-    const warnText  = warnCount > 0 ? `⚠ ${warnCount}件` : '✓';
-
-    // 列定義（ステップ2と同じ順）
-    const cols = [
-      { v: r.person_name,   bold: isContractor },
-      { v: r.account_holder_kana || '-' },
-      { v: r.role || '（不明）', badge: true, isC: isContractor },
-      { v: Number(r.basic_pay_man) > 0 ? `${r.basic_pay_man}万円` : `${r.basic_pay_man ?? 0}万円`, align: 'right' },
-      { v: Number(r.raise_request_man) > 0 ? `${r.raise_request_man}万円` : '-', align: 'right' },
-      { v: Number(r.oiri_man) > 0 ? `${r.oiri_man}万円` : '-',             align: 'right' },
-      { v: Number(r.daily_pay_yen) > 0 ? formatYen(r.daily_pay_yen) : '-', align: 'right' },
-      { v: Number(r.office_rent_yen) > 0 ? formatYen(r.office_rent_yen) : '-', align: 'right' },
-      { v: otherText, wrap: true },
-      { v: warnText, warnBadge: true, hasWarn: warnCount > 0 }
-    ];
-
-    cols.forEach(col => {
-      const td = document.createElement('td');
-      if (col.align) td.style.textAlign = col.align;
-      if (col.wrap) td.className = 'td-wrap';
-
-      if (col.badge) {
-        // 役職バッジ（ステップ2と同じスタイル）
-        const span = document.createElement('span');
-        span.className = col.isC ? 'badge badge-ok' : 'badge badge-gray';
-        span.textContent = col.v;
-        span.title = col.v;
-        td.style.whiteSpace = 'nowrap';
-        td.appendChild(span);
-      } else if (col.warnBadge) {
-        const span = document.createElement('span');
-        span.className = col.hasWarn ? 'badge badge-warn' : 'badge badge-ok';
-        span.textContent = col.v;
-        td.appendChild(span);
-      } else {
-        td.textContent = col.v;
-        if (col.bold) td.style.fontWeight = '700';
-      }
-      tr.appendChild(td);
+  nav.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.currentTab = btn.dataset.tab;
+      state.page = 1;
+      renderTabs();
+      renderTable();
     });
-
-    tb.appendChild(tr);
-  }
-  t.appendChild(tb);
-
-  el.innerHTML = '';
-  el.appendChild(summary);
-  el.appendChild(t);
+  });
 }
 
-function renderSnapReconcileTab(rows, drRows) {
-  const el = $('snap-tab-reconcile');
-  el.innerHTML = '';
+/* ============================================================
+   TABLE
+   ============================================================ */
+function renderTable() {
+  const rows = filteredRows();
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / state.pageSize));
+  if (state.page > pages) state.page = pages;
 
-  const staffWithRec = rows.filter(r => r.reconcile_status && r.reconcile_status !== 'NONE');
+  const start = (state.page - 1) * state.pageSize;
+  const slice = rows.slice(start, start + state.pageSize);
 
-  if (!staffWithRec.length) {
-    el.innerHTML = '<div style="padding:1.5rem;color:var(--text-muted);font-family:var(--font-mono);font-size:0.75rem;">突合結果が保存されていません。<br>次回ステップ4を実行すると保存されます。</div>';
-    return;
+  els.tableBody.innerHTML = slice.map(r => `
+    <tr>
+      <td>${escHtml(r.brand)}</td>
+      <td>${escHtml(r.category)}</td>
+      <td>${escHtml(r.agency)}</td>
+      <td>${escHtml(r.media)}</td>
+      <td>${escHtml(r.plan)}</td>
+      <td>${escHtml(r.note)}</td>
+      <td class="p-amount">${fmtYen(r.amount)}</td>
+    </tr>
+  `).join('');
+
+  // サマリー
+  const viewRows = state.currentTab === 'all' ? state.allRows : state.allRows.filter(r => r.agency === state.currentTab);
+  const totalAmount = viewRows.reduce((s,r) => s + (Number(r.amount)||0), 0);
+  els.summaryTotal.textContent = viewRows.length.toLocaleString();
+  els.summaryAgencies.textContent = state.agencies.length;
+  els.summaryAmount.textContent = '¥' + totalAmount.toLocaleString();
+  els.summaryView.textContent = state.currentTab === 'all' ? 'ALL' : state.currentTab;
+
+  renderPagination(pages);
+
+  // ヘッダーソートアイコン
+  document.querySelectorAll('.data-table th.sortable').forEach(th => {
+    const icon = th.querySelector('.sort-icon');
+    if (th.dataset.col === state.sortCol) {
+      icon.textContent = state.sortDir === 'asc' ? '↑' : '↓';
+    } else {
+      icon.textContent = '⇅';
+      icon.style.opacity = '.4';
+    }
+    th.onclick = () => {
+      if (state.sortCol === th.dataset.col) {
+        state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        state.sortCol = th.dataset.col;
+        state.sortDir = 'asc';
+      }
+      state.page = 1;
+      renderTable();
+    };
+  });
+}
+
+function filteredRows() {
+  let rows = state.currentTab === 'all'
+    ? [...state.allRows]
+    : state.allRows.filter(r => r.agency === state.currentTab);
+
+  const q = state.searchQuery.trim().toLowerCase();
+  if (q) {
+    rows = rows.filter(r =>
+      Object.values(r).some(v => String(v).toLowerCase().includes(q))
+    );
   }
 
-  // サマリー（NG件数 / 業務委託 / 社員）
-  const ngCount  = staffWithRec.filter(r => r.reconcile_status === 'NG').length;
-  const cCount   = staffWithRec.filter(r => (r.role || '').includes('業務委託')).length;
-  const eCount   = staffWithRec.length - cCount;
-  const summary  = document.createElement('div');
-  summary.style.cssText = 'padding:0.5rem 0.75rem;border-bottom:1px solid var(--border);display:flex;gap:0.75rem;align-items:center;font-size:0.72rem;margin-bottom:0.5rem;flex-wrap:wrap;';
-  summary.innerHTML = `
-    <span class="badge badge-ok">業務委託 ${cCount}名</span>
-    <span class="badge badge-gray">社員 ${eCount}名</span>
-    <span style="margin-left:auto" class="badge ${ngCount > 0 ? 'badge-ng' : 'badge-ok'}">NG ${ngCount}件</span>
-  `;
-  el.appendChild(summary);
-
-  // NG先頭・業務委託優先ソート（ステップ3と同じ）
-  const sorted = [...staffWithRec].sort((a, b) => {
-    if (a.reconcile_status === 'NG' && b.reconcile_status !== 'NG') return -1;
-    if (a.reconcile_status !== 'NG' && b.reconcile_status === 'NG') return 1;
-    const aC = (a.role || '').includes('業務委託');
-    const bC = (b.role || '').includes('業務委託');
-    if (aC && !bC) return -1;
-    if (!aC && bC) return 1;
-    return 0;
-  });
-
-  // ステップ3と同じ列順：氏名 / 区分 / 報告書日払い / 月計表日払い / 判定 / 理由
-  const t = document.createElement('table');
-  t.innerHTML = `<thead><tr>
-    <th>氏名</th>
-    <th>区分</th>
-    <th style="text-align:right">報告書 日払い</th>
-    <th style="text-align:right">月計表 日払い</th>
-    <th>判定</th>
-    <th>理由</th>
-  </tr></thead>`;
-  const tb = document.createElement('tbody');
-
-  sorted.forEach(r => {
-    const isContractor = (r.role || '').includes('業務委託');
-    const tr = document.createElement('tr');
-    if (r.reconcile_status === 'NG') tr.classList.add('snap-row-ng');
-    if (!isContractor) tr.classList.add('snap-row-employee');
-
-    // 氏名
-    const nameTd = document.createElement('td');
-    nameTd.textContent = r.person_name;
-    if (isContractor) nameTd.style.fontWeight = '700';
-    tr.appendChild(nameTd);
-
-    // 区分バッジ
-    const roleTd = document.createElement('td');
-    roleTd.innerHTML = isContractor
-      ? '<span class="badge badge-ok">委託</span>'
-      : '<span class="badge badge-gray">社員</span>';
-    tr.appendChild(roleTd);
-
-    // 報告書日払い
-    const repTd = document.createElement('td');
-    repTd.style.textAlign = 'right';
-    repTd.textContent = Number(r.daily_pay_yen) > 0 ? formatYen(r.daily_pay_yen) : '-';
-    tr.appendChild(repTd);
-
-    // 月計表日払い
-    const monTd = document.createElement('td');
-    monTd.style.textAlign = 'right';
-    monTd.textContent = Number(r.reconcile_monthly_yen) > 0 ? formatYen(r.reconcile_monthly_yen) : '-';
-    tr.appendChild(monTd);
-
-    // 判定バッジ
-    const stTd = document.createElement('td');
-    stTd.innerHTML = r.reconcile_status === 'OK'
-      ? '<span class="badge badge-ok"><i class="fas fa-check"></i> OK</span>'
-      : '<span class="badge badge-ng"><i class="fas fa-times"></i> NG</span>';
-    tr.appendChild(stTd);
-
-    // 理由（折り返しあり）
-    const reTd = document.createElement('td');
-    reTd.className = 'td-wrap';
-    reTd.textContent = r.reconcile_reason || '-';
-    reTd.style.fontSize = '0.78rem';
-    tr.appendChild(reTd);
-
-    tb.appendChild(tr);
-  });
-  t.appendChild(tb);
-  el.appendChild(t);
-
-  // DR情報（DRスナップショットがある場合）— 業務委託と同じ列で表示
-  if (drRows.length) {
-    const h2 = document.createElement('div');
-    h2.style.cssText = 'padding:1rem 0 0.3rem;font-family:var(--font-mono);font-size:0.67rem;color:var(--info);letter-spacing:0.1em;border-top:1px solid var(--border);margin-top:0.75rem;';
-    const drNgCount = drRows.filter(r => r.reconcile_status === 'NG').length;
-    h2.innerHTML = `▸ DR ${drRows.length}名　<span class="badge ${drNgCount > 0 ? 'badge-ng' : 'badge-ok'}" style="vertical-align:middle">NG ${drNgCount}件</span>`;
-    el.appendChild(h2);
-
-    // 業務委託と同じ列順：氏名 / 区分 / 報告書日払い（仮払） / 月計表日払い / 判定 / 理由
-    const t2 = document.createElement('table');
-    t2.innerHTML = `<thead><tr>
-      <th>氏名</th>
-      <th>区分</th>
-      <th style="text-align:right">DRファイル仮払</th>
-      <th style="text-align:right">月計表 日払い</th>
-      <th>判定</th>
-      <th>理由</th>
-    </tr></thead>`;
-    const tb2 = document.createElement('tbody');
-    const drSorted = [...drRows].sort((a, b) => {
-      if (a.reconcile_status === 'NG' && b.reconcile_status !== 'NG') return -1;
-      if (a.reconcile_status !== 'NG' && b.reconcile_status === 'NG') return 1;
+  if (state.sortCol) {
+    rows.sort((a, b) => {
+      let va = a[state.sortCol], vb = b[state.sortCol];
+      if (state.sortCol === 'amount') { va = Number(va); vb = Number(vb); }
+      else { va = String(va||'').toLowerCase(); vb = String(vb||'').toLowerCase(); }
+      if (va < vb) return state.sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return state.sortDir === 'asc' ? 1 : -1;
       return 0;
     });
-    drSorted.forEach(r => {
-      const tr = document.createElement('tr');
-      if (r.reconcile_status === 'NG') tr.classList.add('snap-row-ng');
-
-      // 氏名
-      const nameTd = document.createElement('td');
-      nameTd.textContent = r.person_name;
-      nameTd.style.fontWeight = '700';
-      tr.appendChild(nameTd);
-
-      // 区分バッジ
-      const roleTd = document.createElement('td');
-      roleTd.innerHTML = '<span class="badge badge-info">DR</span>';
-      tr.appendChild(roleTd);
-
-      // DRファイル仮払
-      const kariTd = document.createElement('td');
-      kariTd.style.textAlign = 'right';
-      kariTd.textContent = Number(r.karibara_yen) > 0 ? formatYen(r.karibara_yen) : '-';
-      tr.appendChild(kariTd);
-
-      // 月計表日払い
-      const monTd = document.createElement('td');
-      monTd.style.textAlign = 'right';
-      const monYen = Number(r.reconcile_monthly_yen ?? 0);
-      monTd.textContent = monYen > 0 ? formatYen(monYen) : '-';
-      tr.appendChild(monTd);
-
-      // 判定バッジ
-      const stTd = document.createElement('td');
-      const st = r.reconcile_status ?? 'NONE';
-      if (st === 'OK') stTd.innerHTML = '<span class="badge badge-ok"><i class="fas fa-check"></i> OK</span>';
-      else if (st === 'NG') stTd.innerHTML = '<span class="badge badge-ng"><i class="fas fa-times"></i> NG</span>';
-      else stTd.innerHTML = '<span class="badge badge-gray">—</span>';
-      tr.appendChild(stTd);
-
-      // 理由
-      const reTd = document.createElement('td');
-      reTd.className = 'td-wrap';
-      reTd.textContent = r.reconcile_reason || '-';
-      reTd.style.fontSize = '0.78rem';
-      tr.appendChild(reTd);
-
-      tb2.appendChild(tr);
-    });
-    t2.appendChild(tb2);
-    el.appendChild(t2);
   }
+  return rows;
 }
 
-function renderSnapDiffTab(currentRows, prevRows, prevYm, currentDrRows, prevDrRows) {
-  const el = $('snap-tab-diff');
-  if (!prevRows.length) {
-    const [py, pm] = (prevYm || '').split('-');
-    const prevLabel = py && pm ? `${py}年${pm}月` : prevYm;
-    el.innerHTML = `<div style="padding:1.5rem;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted)">
-      前月（${prevLabel}）のスナップショットがないため差分を表示できません。
-    </div>`;
+function renderPagination(pages) {
+  if (pages <= 1) { els.pagination.innerHTML = ''; return; }
+  const btns = [];
+  for (let i = 1; i <= pages; i++) {
+    btns.push(`<button class="page-btn ${i===state.page?'active':''}" data-page="${i}">${i}</button>`);
+  }
+  els.pagination.innerHTML = btns.join('');
+  els.pagination.querySelectorAll('.page-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.page = parseInt(btn.dataset.page);
+      renderTable();
+    });
+  });
+}
+
+// 検索
+els.searchInput.addEventListener('input', e => {
+  state.searchQuery = e.target.value;
+  state.page = 1;
+  renderTable();
+});
+
+// 戻る
+els.btnBack.addEventListener('click', () => {
+  els.dataPanel.style.display = 'none';
+  els.exportPanel.style.display = 'none';
+  els.uploadPanel.style.display = 'block';
+  els.floatingActions.style.display = 'none';
+});
+
+// DATA→EXPORT
+els.btnToExport.addEventListener('click', () => {
+  els.exportPanel.scrollIntoView({ behavior: 'smooth' });
+});
+
+/* ============================================================
+   EXPORT PANEL
+   ============================================================ */
+function renderExportPanel() {
+  els.agencyCheckboxes.innerHTML = state.agencies.map(ag => `
+    <label class="agency-cb-label">
+      <input type="checkbox" class="agency-export-cb" value="${escHtml(ag)}">
+      <span>${escHtml(ag)}</span>
+    </label>
+  `).join('');
+
+  els.btnSelectAll.onclick = () =>
+    document.querySelectorAll('.agency-export-cb').forEach(cb => cb.checked = true);
+  els.btnDeselectAll.onclick = () =>
+    document.querySelectorAll('.agency-export-cb').forEach(cb => cb.checked = false);
+}
+
+/* ============================================================
+   PREVIEW MODAL
+   ============================================================ */
+function showPreviewModal(type, agencies) {
+  const overlay = document.createElement('div');
+  overlay.id = 'previewModalOverlay';
+  overlay.className = 'preview-overlay';
+
+  const sheets = type === 'master'
+    ? [
+        ...(els.optAllSheet.checked ? [{ name:'全データ', rows: state.allRows }] : []),
+        ...(els.optAgencySheets.checked
+          ? state.agencies
+              .filter(ag => state.allRows.some(r => r.agency === ag))
+              .map(ag => ({ name: ag, rows: state.allRows.filter(r => r.agency === ag) }))
+          : [])
+      ]
+    : agencies.map(ag => ({ name: ag, rows: state.allRows.filter(r => r.agency === ag) }));
+
+  if (sheets.length === 0) {
+    toast('出力するデータがありません', 'warn');
     return;
   }
 
-  // 前月マップ（person_keyで照合）
-  const prevMap = {};
-  prevRows.forEach(r => { prevMap[r.person_key] = r; });
+  let currentSheet = 0;
 
-  const diffs = [];
+  function renderSheetPreview() {
+    const s = sheets[currentSheet];
+    const rows = s.rows.slice(0, 100);
+    const totalAmt = s.rows.reduce((sum,r) => sum + (Number(r.amount)||0), 0);
+    document.getElementById('previewFooterInfo').textContent =
+      s.rows.length > 100
+        ? `表示: 100/${s.rows.length}行 (合計: ¥${totalAmt.toLocaleString()})`
+        : `全${s.rows.length}行 (合計: ¥${totalAmt.toLocaleString()})`;
 
-  for (const r of currentRows) {
-    const prev = prevMap[r.person_key];
-    if (!prev) {
-      diffs.push({ name: r.person_name, label: '新規追加', before: '-', after: r.role || '-', severity: 'info' });
-      continue;
-    }
-
-    let hasChange = false;
-
-    // 役職
-    if ((r.role || '') !== (prev.role || '')) {
-      diffs.push({ name: r.person_name, label: '役職変更', before: prev.role || '（空）', after: r.role || '（空）', severity: 'alert' });
-      hasChange = true;
-    }
-    // 基本給
-    if (Number(r.basic_pay_man) !== Number(prev.basic_pay_man)) {
-      diffs.push({ name: r.person_name, label: '基本給変更', before: `${prev.basic_pay_man}万円`, after: `${r.basic_pay_man}万円`, severity: 'alert' });
-      hasChange = true;
-    }
-    // 振込先（銀行名・支店名・口座種別・口座番号・名義カナ）
-    const bankFields = [
-      { key: 'bank_name',           label: '銀行名' },
-      { key: 'branch_name',         label: '支店名' },
-      { key: 'account_type',        label: '口座種別' },
-      { key: 'account_number',      label: '口座番号' },
-      { key: 'account_holder_kana', label: '名義カナ' }
-    ];
-    for (const f of bankFields) {
-      const cv = String(r[f.key] ?? '');
-      const pv = String(prev[f.key] ?? '');
-      if (cv !== pv) {
-        const dispBefore = f.key === 'account_number' ? ('****' + pv.slice(-4)) : (pv || '-');
-        const dispAfter  = f.key === 'account_number' ? ('****' + cv.slice(-4)) : (cv || '-');
-        diffs.push({ name: r.person_name, label: `振込先変更（${f.label}）`, before: dispBefore, after: dispAfter, severity: 'alert' });
-        hasChange = true;
-      }
-    }
-    // 会社名
-    if ((r.company_name || '') !== (prev.company_name || '')) {
-      diffs.push({ name: r.person_name, label: '会社名変更', before: prev.company_name || '（空）', after: r.company_name || '（空）', severity: 'alert' });
-      hasChange = true;
-    }
-    // 代表者名（日付は毎月変わるため対象外）
-    if ((r.representative_name || '') !== (prev.representative_name || '')) {
-      diffs.push({ name: r.person_name, label: '代表者名変更', before: prev.representative_name || '（空）', after: r.representative_name || '（空）', severity: 'alert' });
-      hasChange = true;
-    }
-
-    if (!hasChange) {
-      diffs.push({ name: r.person_name, label: '変更なし', before: '-', after: '-', severity: 'ok' });
-    }
-  }
-
-  // 退職者（今月いない人）
-  const currentKeys = new Set(currentRows.map(r => r.person_key));
-  for (const r of prevRows) {
-    if (!currentKeys.has(r.person_key))
-      diffs.push({ name: r.person_name, label: '削除', before: r.role || '-', after: '-', severity: 'info' });
-  }
-
-  // alertを先頭に
-  const order = { alert: 0, info: 1, ok: 2 };
-  diffs.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
-
-  const t = document.createElement('table');
-  t.innerHTML = `<thead><tr><th>氏名</th><th>変更種別</th><th>変更前</th><th>変更後</th></tr></thead>`;
-  const tb = document.createElement('tbody');
-  diffs.forEach(d => {
-    const tr = document.createElement('tr');
-    if (d.severity === 'alert') tr.classList.add('snap-row-ng');
-    [d.name].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
-    const labelTd = document.createElement('td');
-    const badgeClass = d.severity === 'alert' ? 'badge-ng' : d.severity === 'info' ? 'badge-gray' : 'badge-ok';
-    labelTd.innerHTML = `<span class="badge ${badgeClass}">${escapeHtml(d.label)}</span>`;
-    tr.appendChild(labelTd);
-    [d.before, d.after].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
-    tb.appendChild(tr);
-  });
-  t.appendChild(tb);
-  el.innerHTML = '';
-  el.appendChild(t);
-
-  // ── DR差分セクション ──
-  if (currentDrRows && currentDrRows.length) {
-    const h2 = document.createElement('div');
-    h2.style.cssText = 'padding:1rem 0 0.3rem;font-family:var(--font-mono);font-size:0.67rem;color:var(--info);letter-spacing:0.1em;border-top:1px solid var(--border);margin-top:1rem;';
-
-    const drDiffs = [];
-    const prevDrMap = {};
-    (prevDrRows || []).forEach(r => { prevDrMap[r.person_key] = r; });
-
-    for (const r of currentDrRows) {
-      const prev = prevDrMap[r.person_key];
-      if (!prev) {
-        drDiffs.push({ name: r.person_name, label: '新規追加', before: '-', after: '-', severity: 'info' });
-        continue;
-      }
-      let hasChange = false;
-      // ドライバー報酬は毎月変動するため差分チェック対象外
-      // 振込先
-      const drBankFields = [
-        { key: 'bank_name', label: '銀行名' }, { key: 'branch_name', label: '支店名' },
-        { key: 'account_type', label: '口座種別' }, { key: 'account_number', label: '口座番号' },
-        { key: 'account_holder_kana', label: '名義カナ' }
-      ];
-      for (const f of drBankFields) {
-        const cv = String(r[f.key] ?? ''), pv = String(prev[f.key] ?? '');
-        if (cv !== pv) {
-          const db = f.key === 'account_number' ? ('****' + pv.slice(-4)) : (pv || '-');
-          const da = f.key === 'account_number' ? ('****' + cv.slice(-4)) : (cv || '-');
-          drDiffs.push({ name: r.person_name, label: `振込先変更（${f.label}）`, before: db, after: da, severity: 'alert' });
-          hasChange = true;
-        }
-      }
-      // 会社名
-      const cComp = String(r.company_name ?? ''), pComp = String(prev.company_name ?? '');
-      if (cComp !== pComp && (cComp || pComp)) {
-        drDiffs.push({ name: r.person_name, label: '会社名変更', before: pComp || '（空）', after: cComp || '（空）', severity: 'alert' });
-        hasChange = true;
-      }
-      // 代表者名
-      const cRep = String(r.representative_name ?? ''), pRep = String(prev.representative_name ?? '');
-      if (cRep !== pRep && (cRep || pRep)) {
-        drDiffs.push({ name: r.person_name, label: '代表者名変更', before: pRep || '（空）', after: cRep || '（空）', severity: 'alert' });
-        hasChange = true;
-      }
-      if (!hasChange) drDiffs.push({ name: r.person_name, label: '変更なし', before: '-', after: '-', severity: 'ok' });
-    }
-    (prevDrRows || []).forEach(r => {
-      if (!currentDrRows.find(c => c.person_key === r.person_key))
-        drDiffs.push({ name: r.person_name, label: '削除', before: '-', after: '-', severity: 'info' });
-    });
-
-    drDiffs.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
-    const alertCount = drDiffs.filter(d => d.severity === 'alert').length;
-    h2.innerHTML = `▸ DR差分 ${currentDrRows.length}名　<span class="badge ${alertCount > 0 ? 'badge-ng' : 'badge-ok'}" style="vertical-align:middle">要確認 ${alertCount}件</span>`;
-    el.appendChild(h2);
-
-    if (!prevDrRows || !prevDrRows.length) {
-      const msg = document.createElement('div');
-      msg.style.cssText = 'padding:0.75rem;font-size:0.78rem;color:var(--text-muted);';
-      msg.textContent = '前月DRスナップショットがないため差分を表示できません。';
-      el.appendChild(msg);
-    } else {
-      const t2 = document.createElement('table');
-      t2.innerHTML = `<thead><tr><th>氏名</th><th>変更種別</th><th>変更前</th><th>変更後</th></tr></thead>`;
-      const tb2 = document.createElement('tbody');
-      drDiffs.forEach(d => {
-        const tr = document.createElement('tr');
-        if (d.severity === 'alert') tr.classList.add('snap-row-ng');
-        [d.name].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
-        const labelTd = document.createElement('td');
-        const bc = d.severity === 'alert' ? 'badge-ng' : d.severity === 'info' ? 'badge-gray' : 'badge-ok';
-        labelTd.innerHTML = `<span class="badge ${bc}">${escapeHtml(d.label)}</span>`;
-        tr.appendChild(labelTd);
-        [d.before, d.after].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
-        tb2.appendChild(tr);
-      });
-      t2.appendChild(tb2);
-      el.appendChild(t2);
-    }
-  }
-}
-
-// ==============================
-// ユーティリティ
-// ==============================
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-// ==============================
-// 一括インポート
-// ==============================
-function setupBulkImport() {
-  const btn            = $('btn-bulk-import');
-  const modal          = $('bulk-import-modal');
-  const closeBtn       = $('bulk-modal-close');
-  const cancelBtn      = $('btn-bulk-cancel');
-  const dropZone       = $('bulk-drop-zone');
-  const fileInput      = $('bulk-file-input');
-  const addBtn         = $('btn-bulk-add');
-  const addFolderInput = $('bulk-file-input-add-folder');
-  const addFileInput   = $('bulk-file-input-add-file');
-  const runBtn         = $('btn-bulk-run');
-  const modeFolderBtn  = $('bulk-mode-folder');
-  const modeFileBtn    = $('bulk-mode-file');
-
-  // モード切り替え（フォルダ / ファイル）
-  let folderMode = true;
-  function setMode(isFolder) {
-    folderMode = isFolder;
-    if (isFolder) {
-      fileInput.setAttribute('webkitdirectory', '');
-      fileInput.removeAttribute('multiple');
-      $('bulk-drop-icon').className = 'fas fa-folder-open';
-      $('bulk-drop-label').textContent = 'クリックしてフォルダを選択';
-      $('bulk-drop-sub').textContent   = 'サブフォルダも含めて自動スキャンします。関係ないファイルは無視されます。';
-      modeFolderBtn.className = 'btn btn-primary';
-      modeFileBtn.className   = 'btn btn-outline';
-    } else {
-      fileInput.removeAttribute('webkitdirectory');
-      fileInput.setAttribute('multiple', '');
-      $('bulk-drop-icon').className = 'fas fa-file-excel';
-      $('bulk-drop-label').textContent = 'クリックしてファイルを選択（複数可）';
-      $('bulk-drop-sub').textContent   = 'Ctrl/Shiftで複数選択できます。関係ないファイルは無視されます。';
-      modeFolderBtn.className = 'btn btn-outline';
-      modeFileBtn.className   = 'btn btn-primary';
-    }
-    fileInput.value = '';
-  }
-  modeFolderBtn.addEventListener('click', () => setMode(true));
-  modeFileBtn.addEventListener('click',   () => setMode(false));
-
-  btn.addEventListener('click', () => {
-    resetBulkModal();
-    modal.style.display = 'flex';
-  });
-  closeBtn.addEventListener('click',  () => { modal.style.display = 'none'; });
-  cancelBtn.addEventListener('click', () => { modal.style.display = 'none'; });
-  modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
-
-  // 初回選択
-  dropZone.addEventListener('click', () => fileInput.click());
-  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.style.borderColor = 'var(--primary)'; });
-  dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--border)'; });
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.style.borderColor = 'var(--border)';
-    handleBulkFiles(Array.from(e.dataTransfer.files), false);
-  });
-  fileInput.addEventListener('change', e => {
-    handleBulkFiles(Array.from(e.target.files), false);
-    fileInput.value = '';
-  });
-
-  // 追加選択（フォルダ or ファイル）
-  addBtn.addEventListener('click', () => {
-    // 現在のモードに合わせて選択
-    if (folderMode) addFolderInput.click();
-    else            addFileInput.click();
-  });
-  addFolderInput.addEventListener('change', e => {
-    handleBulkFiles(Array.from(e.target.files), true);
-    addFolderInput.value = '';
-  });
-  addFileInput.addEventListener('change', e => {
-    handleBulkFiles(Array.from(e.target.files), true);
-    addFileInput.value = '';
-  });
-
-  runBtn.addEventListener('click', runBulkImport);
-}
-
-function resetBulkModal() {
-  $('bulk-file-list').style.display  = 'none';
-  $('bulk-actions').style.display    = 'none';
-  $('bulk-progress').style.display   = 'none';
-  $('bulk-file-table').innerHTML     = '';
-  $('bulk-progress-log').innerHTML   = '';
-  $('bulk-progress-bar').style.width = '0%';
-  $('btn-bulk-run').disabled         = true;
-  $('bulk-drop-zone').style.display  = 'block';
-  $('bulk-file-input').value         = '';
-  window._bulkSets   = [];
-  window._bulkMap    = {};
-  window._bulkIgnored = 0;
-}
-
-function handleBulkFiles(files, merge = false) {
-  // merge=true のときは既存マップに追加、false のときはリセット
-  const map = merge ? (window._bulkMap || {}) : {};
-  let ignoredCount = merge ? (window._bulkIgnored || 0) : 0;
-
-  for (const f of files) {
-    const name = f.name;
-    if (!/\.(xlsx|xls)$/i.test(name)) continue;
-
-    const { storeName, periodYm } = parseFileNameInfo(name);
-    if (!storeName || !periodYm) { ignoredCount++; continue; }
-
-    const isReport  = /業務報告書/.test(name);
-    const isMonthly = /月計表|内勤請求/.test(name);
-    const isDR      = /DR/.test(name);
-    if (!isReport && !isMonthly && !isDR) { ignoredCount++; continue; }
-
-    const key = `${storeName}__${periodYm}`;
-    if (!map[key]) map[key] = { storeName, periodYm, report: null, monthly: null, dr: null };
-    if (isReport)  map[key].report  = f;
-    if (isMonthly) map[key].monthly = f;
-    if (isDR)      map[key].dr      = f;
-  }
-
-  window._bulkMap    = map;
-  window._bulkIgnored = ignoredCount;
-
-  // 古い月から順にソート
-  const sets = Object.values(map).sort((a, b) => a.periodYm.localeCompare(b.periodYm));
-  window._bulkSets = sets;
-  window._bulkIgnored = ignoredCount;
-
-  // ドロップゾーンを隠して一覧を表示
-  $('bulk-drop-zone').style.display = 'none';
-
-  renderBulkTable(sets, ignoredCount);
-}
-
-function renderBulkTable(sets, ignoredCount) {
-  // テーブル表示
-  const tableEl = $('bulk-file-table');
-  if (sets.length === 0) {
-    tableEl.innerHTML = '<div style="padding:0.5rem;font-size:0.8rem;color:var(--danger)">認識できるファイルが見つかりませんでした。ファイル名に【店舗名】と年月が含まれているか確認してください。</div>';
-    $('btn-bulk-run').disabled = true;
-  } else {
-    const rows = sets.map(s => {
-      const rOk = s.report  ? `<span class="badge badge-ok" title="${escapeHtml(s.report.name)}">✓ あり</span>`  : '<span class="badge badge-ng">なし</span>';
-      const mOk = s.monthly ? `<span class="badge badge-ok" title="${escapeHtml(s.monthly.name)}">✓ あり</span>` : '<span class="badge badge-ng">なし</span>';
-      const dOk = s.dr      ? `<span class="badge badge-info" title="${escapeHtml(s.dr.name)}">✓ あり</span>`    : '<span class="badge badge-gray">なし</span>';
-      const canRun = s.report && s.monthly;
-      const key = `${s.storeName}__${s.periodYm}`;
-      const statusCell = canRun
-        ? '<span class="badge badge-ok">処理可</span>'
-        : `<span style="display:inline-flex;align-items:center;gap:0.6rem">
-             <span class="badge badge-warn"><i class="fas fa-forward"></i> スキップ</span>
-             <button onclick="deleteBulkStore('${escapeHtml(key)}')" title="この店舗を削除" style="background:none;border:none;cursor:pointer;color:var(--danger);font-size:0.72rem;padding:0;text-decoration:underline;text-underline-offset:2px;opacity:0.8" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'" aria-label="削除">削除</button>
-           </span>`;
-      return `<tr data-bulk-key="${escapeHtml(key)}" style="${canRun ? '' : 'opacity:.5'}">
-        <td style="padding:4px 8px;font-weight:700">${escapeHtml(s.storeName)}</td>
-        <td style="padding:4px 8px">${s.periodYm.replace('-','年').replace(/(\d{2})$/,m=>parseInt(m)+'月')}</td>
-        <td style="padding:4px 8px">${rOk}</td>
-        <td style="padding:4px 8px">${mOk}</td>
-        <td style="padding:4px 8px">${dOk}</td>
-        <td style="padding:4px 8px">${statusCell}</td>
-      </tr>`;
-    }).join('');
-    tableEl.innerHTML = `
-      <table style="width:100%;border-collapse:collapse;font-size:0.78rem">
-        <thead><tr style="background:var(--gray-50)">
-          <th style="padding:4px 8px;text-align:left">店舗</th>
-          <th style="padding:4px 8px;text-align:left">年月</th>
-          <th style="padding:4px 8px;text-align:left">業務報告書</th>
-          <th style="padding:4px 8px;text-align:left">月計表</th>
-          <th style="padding:4px 8px;text-align:left">DR</th>
-          <th style="padding:4px 8px;text-align:left">状態</th>
+    document.getElementById('previewTableWrap').innerHTML = `
+      <table class="preview-table">
+        <thead><tr>
+          <th>ブランド</th><th>カテゴリ</th><th>代理店</th>
+          <th>媒体</th><th>プラン</th><th>備考</th><th>金額</th>
         </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-    const runnable = sets.filter(s => s.report && s.monthly).length;
-    const skipped  = sets.filter(s => !s.report || !s.monthly).length;
-    $('btn-bulk-run').disabled = runnable === 0;
-    $('btn-bulk-run').innerHTML = `<i class="fas fa-play"></i> 処理実行（${runnable}件${skipped > 0 ? `・${skipped}件スキップ` : ''}）`;
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td>${escHtml(r.brand)}</td>
+              <td>${escHtml(r.category)}</td>
+              <td>${escHtml(r.agency)}</td>
+              <td>${escHtml(r.media)}</td>
+              <td>${escHtml(r.plan)}</td>
+              <td>${escHtml(r.note)}</td>
+              <td class="p-amount">${fmtYen(r.amount)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+
+    // タブ更新
+    document.querySelectorAll('.preview-sheet-tab').forEach((t,i) => {
+      t.classList.toggle('active', i === currentSheet);
+    });
   }
 
-  // 無視ファイル数を表示
-  const ignoredEl = $('bulk-ignored-count');
-  if (ignoredEl) ignoredEl.textContent = ignoredCount > 0 ? `※ 認識できなかったファイル ${ignoredCount}件は無視しました` : '';
-
-  $('bulk-file-list').style.display = 'block';
-  $('bulk-actions').style.display   = 'flex';
-}
-
-function deleteBulkStore(key) {
-  // _bulkMap と _bulkSets から該当店舗を削除して再描画
-  if (!window._bulkMap || !window._bulkSets) return;
-  delete window._bulkMap[key];
-  window._bulkSets = window._bulkSets.filter(s => `${s.storeName}__${s.periodYm}` !== key);
-  renderBulkTable(window._bulkSets, window._bulkIgnored || 0);
-  showToast('店舗を削除しました', 'info');
-}
-
-async function runBulkImport() {
-  const sets = (window._bulkSets || []).filter(s => s.report && s.monthly);
-  if (!sets.length) return;
-
-  $('bulk-drop-zone').style.display = 'none';
-  $('bulk-file-list').style.display = 'none';
-  $('bulk-actions').style.display   = 'none';
-  $('bulk-progress').style.display  = 'block';
-
-  const logEl = $('bulk-progress-log');
-  const barEl = $('bulk-progress-bar');
-
-  function log(msg, type = 'info') {
-    const colors = { info: 'var(--text-muted)', ok: 'var(--success)', error: 'var(--danger)', warn: 'var(--warning)' };
-    const line = document.createElement('div');
-    line.style.color = colors[type] || colors.info;
-    line.style.padding = '1px 0';
-    line.textContent = msg;
-    logEl.appendChild(line);
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  let done = 0;
-  for (const s of sets) {
-    log(`[${s.storeName} ${s.periodYm}] 処理開始...`);
-    try {
-      const reportBuf  = await readFileAsArrayBuffer(s.report);
-      const monthlyBuf = await readFileAsArrayBuffer(s.monthly);
-      const drBuf      = s.dr ? await readFileAsArrayBuffer(s.dr) : null;
-
-      // パース
-      const { contractors: allPeople } = await parseReport(reportBuf);
-      const contractors = allPeople.filter(c => (c.role || '').includes('業務委託'));
-      const { dailyPayEntries } = await parseMonthly(monthlyBuf);
-
-      // 突合
-      const reconcileResults = reconcile(allPeople, dailyPayEntries);
-      let drList = [], drReconcileResults = [];
-      if (drBuf) {
-        const drParsed = await parseDR(drBuf);
-        drList = drParsed.drList;
-        drReconcileResults = reconcileDR(drList, dailyPayEntries);
-      }
-
-      // スナップショット保存
-      await saveSnapshot(allPeople, s.storeName, s.periodYm, reconcileResults);
-      if (drList.length) await saveDRSnapshot(drList, s.storeName, s.periodYm, drReconcileResults);
-
-      log(`[${s.storeName} ${s.periodYm}] ✅ 完了（委託者${contractors.length}名${drList.length ? `、DR${drList.length}名` : ''}）`, 'ok');
-    } catch (e) {
-      log(`[${s.storeName} ${s.periodYm}] ❌ エラー: ${e.message}`, 'error');
-    }
-    done++;
-    barEl.style.width = Math.round(done / sets.length * 100) + '%';
-  }
-
-  log(`─── 完了: ${done}件処理しました ───`, 'ok');
-  await new Promise(r => setTimeout(r, 3000));
-  await loadSnapshotList();
-
-  // 閉じるボタンを追加
-  const closeBtn2 = document.createElement('button');
-  closeBtn2.className = 'btn btn-primary';
-  closeBtn2.style.cssText = 'margin-top:1rem;width:100%';
-  closeBtn2.textContent = '閉じる';
-  closeBtn2.addEventListener('click', () => { $('bulk-import-modal').style.display = 'none'; });
-  $('bulk-progress').appendChild(closeBtn2);
-}
-
-// ============================================================
-// フォルダ整理機能
-// ============================================================
-
-// 仕分けルール: キーワード → フォルダ名（コピー対象）
-const ORGANIZER_RULES = [
-  { keyword: '業務報告書', folder: '業務報告書' },
-  { keyword: '各種統計',   folder: '各種統計'   },
-  { keyword: '店舗データ', folder: '店舗データ' },
-];
-// DR請求書フォルダは完全に空で作成（JSZipは空フォルダをサポートしないためダミーは使わない）
-// → generateAsync後に空フォルダとして追加する方法を使用
-const ORGANIZER_EMPTY_FOLDERS = ['業務報告書', '各種統計', '店舗データ', '内勤請求', '内勤請求/DR請求書'];
-
-let _organizerAllFiles = []; // フォルダ選択で取得した全Fileオブジェクト
-
-function initOrganizerModal() {
-  const openBtn   = $('btn-folder-organizer');
-  const modal     = $('organizer-modal');
-  const closeBtn  = $('organizer-modal-close');
-  const dropZone  = $('organizer-drop-zone');
-  const fileInput = $('organizer-file-input');
-  const runBtn    = $('btn-organizer-run');
-  const cancelBtn = $('btn-organizer-cancel');
-
-  if (!openBtn) return;
-
-  openBtn.addEventListener('click', () => {
-    resetOrganizerModal();
-    modal.style.display = 'flex';
-  });
-  closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
-  cancelBtn.addEventListener('click', () => { resetOrganizerModal(); });
-  modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
-
-  dropZone.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', e => handleOrganizerFolder(Array.from(e.target.files)));
-
-  runBtn.addEventListener('click', runOrganizerProcess);
-}
-
-function resetOrganizerModal() {
-  _organizerAllFiles = [];
-  $('organizer-drop-zone').style.display  = 'block';
-  $('organizer-file-list').style.display  = 'none';
-  $('organizer-progress').style.display   = 'none';
-  $('organizer-actions').style.display    = 'none';
-  $('organizer-file-table').innerHTML     = '';
-  $('organizer-progress-bar').style.width = '0%';
-  $('organizer-progress-log').innerHTML   = '';
-  $('organizer-file-input').value         = '';
-  $('btn-organizer-run').disabled         = true;
-}
-
-function handleOrganizerFolder(files) {
-  // フォルダ内の全ファイルを受け取る（ZIP・Excel）
-  _organizerAllFiles = files.filter(f => {
-    const ext = f.name.split('.').pop().toLowerCase();
-    return ['zip','xls','xlsx','xlsm'].includes(ext);
-  });
-
-  if (_organizerAllFiles.length === 0) {
-    showToast('対応ファイルが見つかりませんでした（ZIP・Excel）', 'warn');
-    return;
-  }
-
-  // ZIP数・Excel数を集計して表示
-  const zips   = _organizerAllFiles.filter(f => f.name.toLowerCase().endsWith('.zip'));
-  const excels = _organizerAllFiles.filter(f => !f.name.toLowerCase().endsWith('.zip'));
-
-  // サマリー行
-  const summaryRows = [];
-  if (zips.length > 0)   summaryRows.push(`<tr><td style="padding:4px 8px">🗜️ ZIPファイル</td><td style="padding:4px 8px">${zips.length} 件（展開して仕分け）</td></tr>`);
-  if (excels.length > 0) summaryRows.push(`<tr><td style="padding:4px 8px">📊 Excelファイル</td><td style="padding:4px 8px">${excels.length} 件（直接仕分け）</td></tr>`);
-
-  $('organizer-file-table').innerHTML = `
-    <div style="font-size:0.78rem;margin-bottom:0.5rem;color:var(--text-secondary)">
-      <i class="fas fa-folder-open"></i> フォルダ内のファイルを検出しました
+  overlay.innerHTML = `
+    <div class="preview-modal">
+      <div class="preview-modal-header">
+        <span class="preview-modal-title">⬡ EXPORT PREVIEW</span>
+        <button class="preview-close" id="btnPreviewClose">✕ 閉じる</button>
+      </div>
+      <div class="preview-modal-body">
+        <div class="preview-sheet-tabs">
+          ${sheets.map((s,i) => `
+            <button class="preview-sheet-tab ${i===0?'active':''}" data-idx="${i}">
+              ${escHtml(s.name)} (${s.rows.length}行)
+            </button>
+          `).join('')}
+        </div>
+        <div class="preview-table-wrap" id="previewTableWrap"></div>
+      </div>
+      <div class="preview-modal-footer">
+        <span id="previewFooterInfo"></span>
+        <button class="hud-btn btn-primary" id="btnPreviewDownload">
+          <span class="btn-icon">⬇</span>
+          <span>ダウンロード実行</span>
+          <span class="btn-glow"></span>
+        </button>
+      </div>
     </div>
-    <table style="width:100%;border-collapse:collapse;font-size:0.8rem">
-      <tbody>${summaryRows.join('')}</tbody>
-    </table>
-    <div style="margin-top:0.6rem;font-size:0.72rem;color:var(--gray-400)">
-      仕分けルール: 業務報告書 / 各種統計 / 店舗データ → 各フォルダへコピー｜DR請求書 → 空フォルダ作成
-    </div>`;
+  `;
 
-  $('organizer-drop-zone').style.display  = 'none';
-  $('organizer-file-list').style.display  = 'block';
-  $('organizer-actions').style.display    = 'flex';
-  $('btn-organizer-run').disabled         = false;
+  document.body.appendChild(overlay);
+  renderSheetPreview();
+
+  overlay.querySelectorAll('.preview-sheet-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      currentSheet = parseInt(tab.dataset.idx);
+      renderSheetPreview();
+    });
+  });
+
+  $('btnPreviewClose').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  $('btnPreviewDownload').addEventListener('click', () => {
+    overlay.remove();
+    if (type === 'master') downloadMaster();
+    else downloadAgency(agencies);
+  });
 }
 
-async function runOrganizerProcess() {
-  $('organizer-file-list').style.display  = 'none';
-  $('organizer-actions').style.display    = 'none';
-  $('organizer-progress').style.display   = 'block';
+/* ============================================================
+   EXCEL DOWNLOAD
+   ============================================================ */
 
-  const logEl = $('organizer-progress-log');
-  const barEl = $('organizer-progress-bar');
+/**
+ * 統合Excelを生成してダウンロード
+ */
+els.btnExportMaster.addEventListener('click', () => {
+  if (!state.allRows.length) { toast('データがありません', 'warn'); return; }
+  showPreviewModal('master', state.agencies);
+});
 
-  function log(msg) {
-    logEl.innerHTML += msg + '<br>';
-    logEl.scrollTop = logEl.scrollHeight;
-  }
+async function downloadMaster() {
+  showLoading('GENERATING...', 'Excelファイルを生成中');
+  await new Promise(r => setTimeout(r, 200));
+  try {
+    const wb = XLSX.utils.book_new();
+    const includeAll    = els.optAllSheet.checked;
+    const includeAgency = els.optAgencySheets.checked;
 
-  const outputFiles = {};
-
-  // DR請求書フォルダ：JSZipでは空フォルダをフォルダオブジェクトとして追加
-  const outZip = new JSZip();
-  for (const folder of ORGANIZER_EMPTY_FOLDERS) {
-    outZip.folder(folder); // 空フォルダとして登録
-  }
-
-  const total = _organizerAllFiles.length;
-  let done = 0;
-
-  for (const file of _organizerAllFiles) {
-    const ext = file.name.split('.').pop().toLowerCase();
-    barEl.style.width = `${Math.round((done / total) * 80)}%`;
-
-    if (ext === 'zip') {
-      // ZIPと同名フォルダを作り、中身を全コピー＋仕分けフォルダにもコピー
-      const zipBaseName = file.name.replace(/\.zip$/i, '');
-      log(`📦 ZIP展開中: ${escapeHtml(file.name)} → ${escapeHtml(zipBaseName)}/`);
-      try {
-        const zip = await JSZip.loadAsync(file);
-        const entries = Object.entries(zip.files);
-        const fileEntries = entries.filter(([, e]) => !e.dir);
-        log(`  → ${fileEntries.length} ファイル検出`);
-
-        for (const [path, zipEntry] of fileEntries) {
-          // ZIPのトップレベルに余分な同名フォルダがある場合はフラット化
-          // 例: 大宮/大宮/file.xlsx → 大宮/file.xlsx
-          let relativePath = path;
-          const parts = path.split('/');
-          if (parts.length >= 2 && parts[0] === zipBaseName) {
-            relativePath = parts.slice(1).join('/');
-          }
-          const fname = relativePath.split('/').pop();
-          if (!fname) continue;
-
-          const buf = await zipEntry.async('arraybuffer');
-
-          // ① 同名フォルダに全ファイルコピー（種類問わず）
-          outputFiles[`${zipBaseName}/${relativePath}`] = buf;
-
-          // ② Excel は仕分けフォルダにもコピー
-          const fext = fname.split('.').pop().toLowerCase();
-          if (['xls','xlsx','xlsm'].includes(fext)) {
-            const dest = getOrganizerDest(fname);
-            if (dest) {
-              outputFiles[`${dest}/${fname}`] = buf;
-              log(`  ✓ ${escapeHtml(fname)} → ${escapeHtml(zipBaseName)}/ + ${dest}/`);
-            } else {
-              log(`  → ${escapeHtml(fname)} → ${escapeHtml(zipBaseName)}/（仕分けなし）`);
-            }
-          }
-        }
-      } catch(e) {
-        log(`  ⚠️ ZIP読み込み失敗: ${escapeHtml(file.name)} (${e.message})`);
-      }
-    } else {
-      const dest = getOrganizerDest(file.name);
-      if (dest) {
-        const buf = await file.arrayBuffer();
-        outputFiles[`${dest}/${file.name}`] = buf;
-        log(`✓ ${escapeHtml(file.name)} → ${dest}/`);
-      } else {
-        log(`- ${escapeHtml(file.name)}（仕分けなし）`);
-      }
+    if (includeAll) {
+      const ws = buildSheet(state.allRows);
+      XLSX.utils.book_append_sheet(wb, ws, '全データ');
     }
-    done++;
+    if (includeAgency) {
+      state.agencies.forEach(ag => {
+        const rows = state.allRows.filter(r => r.agency === ag);
+        if (rows.length === 0) return;
+        const ws = buildSheet(rows);
+        const safeAg = ag.slice(0, 31).replace(/[\\/:?*[\]]/g,'_');
+        XLSX.utils.book_append_sheet(wb, ws, safeAg);
+      });
+    }
+
+    const fname = (els.masterFileName.value || '【まとめ】媒体管理表') + '.xlsx';
+    await writeWorkbook(wb, fname);
+    hideLoading();
+    toast(`「${fname}」をダウンロードしました`, 'success');
+    sysLog(`EXPORT MASTER: ${fname}`, 'ok');
+  } catch(err) {
+    hideLoading();
+    toast('Excelの生成に失敗しました: ' + err.message, 'error');
+    sysLog(`EXPORT ERROR: ${err.message}`, 'error');
+  }
+}
+
+/**
+ * 代理店別個別ファイルを生成・ダウンロード
+ */
+els.btnExportAgency.addEventListener('click', () => {
+  const selected = [...document.querySelectorAll('.agency-export-cb:checked')].map(cb => cb.value);
+  if (selected.length === 0) { toast('代理店を選択してください', 'warn'); return; }
+  showPreviewModal('agency', selected);
+});
+
+async function downloadAgency(agencies) {
+  showLoading('GENERATING...', 'Excelファイルを生成中');
+  await new Promise(r => setTimeout(r, 200));
+  try {
+    let count = 0;
+    for (const ag of agencies) {
+      const rows = state.allRows.filter(r => r.agency === ag);
+      if (rows.length === 0) continue;
+
+      const wb = XLSX.utils.book_new();
+      const ws = buildSheet(rows);
+      const safeAg = ag.slice(0, 31).replace(/[\\/:?*[\]]/g,'_');
+      XLSX.utils.book_append_sheet(wb, ws, safeAg);
+
+      const prefix = els.agencyFilePrefix.value || '媒体管理表';
+      const fname = `【${ag}】${prefix}.xlsx`;
+      await writeWorkbook(wb, fname);
+      count++;
+      sysLog(`EXPORT: ${fname}`, 'ok');
+    }
+    hideLoading();
+    toast(`${count}ファイルをダウンロードしました`, 'success');
+  } catch(err) {
+    hideLoading();
+    toast('Excelの生成に失敗しました: ' + err.message, 'error');
+    sysLog(`EXPORT ERROR: ${err.message}`, 'error');
+  }
+}
+
+/**
+ * Excelシートを生成（ヘッダー + データ + スタイル）
+ * - ヘッダー行: 薄黄色背景・太字・中央・黒細罫線
+ * - データ行: 原本の背景色をそのまま反映、黒細罫線
+ * - 金額列: 通貨フォーマット・右寄せ
+ */
+function buildSheet(rows) {
+  const COLS       = ['ブランド','カテゴリ','代理店','媒体','プラン','備考','金額'];
+  const COL_WIDTHS = [16, 12, 18, 28, 32, 22, 14];
+
+  /* ---- スタイル定義 ---- */
+  const thinBlack = { style: 'thin', color: { rgb: '000000' } };
+  const allBlack  = { top: thinBlack, bottom: thinBlack, left: thinBlack, right: thinBlack };
+
+  // ヘッダースタイル
+  const styleHeader = {
+    fill: { fgColor: { rgb: 'FFF9C4' } },
+    font: { bold: true, sz: 10, name: 'Meiryo UI' },
+    alignment: { horizontal: 'center', vertical: 'center', wrapText: false },
+    border: allBlack,
+  };
+
+  /* ---- ワークシート組み立て ---- */
+  const ws = {};
+
+  // ヘッダー行 (row 0)
+  COLS.forEach((label, ci) => {
+    const addr = XLSX.utils.encode_cell({ r: 0, c: ci });
+    ws[addr] = { v: label, t: 's', s: styleHeader };
+  });
+
+  // データ行 (row 1〜)
+  rows.forEach((r, ri) => {
+    const rowIdx = ri + 1;
+    const dataArr = [r.brand, r.category, r.agency, r.media, r.plan, r.note, r.amount];
+
+    dataArr.forEach((val, ci) => {
+      const addr  = XLSX.utils.encode_cell({ r: rowIdx, c: ci });
+      const isAmt = ci === 6;
+
+      // 原本の背景色を取得（なければ白）
+      const srcRgb = (r._colors && r._colors[ci]) || null;
+      const fillColor = srcRgb ? { rgb: srcRgb } : { rgb: 'FFFFFF' };
+
+      const style = {
+        fill: { fgColor: fillColor },
+        font: { sz: 10, name: 'Meiryo UI' },
+        alignment: isAmt
+          ? { horizontal: 'right', vertical: 'center' }
+          : { horizontal: 'left',  vertical: 'center' },
+        border: allBlack,
+        numFmt: isAmt ? '"¥"#,##0;[Red]-"¥"#,##0' : 'General',
+      };
+
+      if (isAmt) {
+        ws[addr] = { v: Number(val) || 0, t: 'n', s: style };
+      } else {
+        ws[addr] = { v: String(val ?? ''), t: 's', s: style };
+      }
+    });
+  });
+
+  // シート範囲
+  ws['!ref'] = XLSX.utils.encode_range({ r: 0, c: 0 }, { r: rows.length, c: 6 });
+
+  // 列幅
+  ws['!cols'] = COL_WIDTHS.map(w => ({ wch: w }));
+
+  // 行の高さ（ヘッダーを少し高く）
+  ws['!rows'] = [{ hpt: 20 }];
+
+  // オートフィルター
+  ws['!autofilter'] = { ref: 'A1:G1' };
+
+  return ws;
+}
+
+/* ============================================================
+   WRITE HELPER — スタイル付き＋ウィンドウ枠固定で書き出す
+   JSZip で xlsx バイナリを開き、sheet XML に直接 <pane> を注入する。
+   ============================================================ */
+async function writeWorkbook(wb, fname) {
+  // 1. xlsx-js-style でバイナリ生成（ArrayBuffer）
+  const wbout = XLSX.write(wb, {
+    bookType: 'xlsx',
+    type: 'array',
+    cellStyles: true,
+  });
+
+  // 2. JSZip で ZIP を開く
+  const zip = await JSZip.loadAsync(wbout);
+
+  // 3. 各シートの XML にウィンドウ枠固定を注入
+  const sheetPaths = Object.keys(zip.files)
+    .filter(p => /xl\/worksheets\/sheet\d+\.xml$/.test(p));
+
+  for (const path of sheetPaths) {
+    let xml = await zip.files[path].async('string');
+
+    // すでに <pane> があればスキップ
+    if (xml.includes('<pane ')) { zip.file(path, xml); continue; }
+
+    const paneXml =
+      '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>' +
+      '<selection pane="bottomLeft" activeCell="A2" sqref="A2"/>';
+
+    if (xml.includes('</sheetView>')) {
+      // パターンA: </sheetView> 閉じタグあり → 直前に挿入
+      xml = xml.replace(/<\/sheetView>/g, paneXml + '</sheetView>');
+    } else {
+      // パターンB: <sheetView .../> 自己閉じ（xlsx-js-styleの出力形式）
+      xml = xml.replace(/<sheetView\b([^>]*)\/>/g,
+        (_, attrs) => `<sheetView${attrs}>${paneXml}</sheetView>`);
+    }
+
+    zip.file(path, xml);
   }
 
-  barEl.style.width = '90%';
-  log('📦 ZIPを作成中...');
-
-  for (const [path, buf] of Object.entries(outputFiles)) {
-    outZip.file(path, buf);
-  }
-
-  const blob = await outZip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
-  barEl.style.width = '100%';
-  log('✅ 完了！');
-
-  const today   = new Date();
-  const dateStr = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
-  const a = document.createElement('a');
-  a.href     = URL.createObjectURL(blob);
-  a.download = `整理済み締め書類_${dateStr}.zip`;
+  // 4. 修正済みバイナリをBlobとして生成 → ダウンロード
+  const blob = await zip.generateAsync({
+    type: 'blob',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href     = url;
+  a.download = fname;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(a.href);
-
-  showToast('「整理済み締め書類」のダウンロードを開始しました', 'success');
-
-  setTimeout(() => {
-    $('organizer-modal').style.display = 'none';
-    resetOrganizerModal();
-  }, 2000);
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 
-function getOrganizerDest(filename) {
-  for (const rule of ORGANIZER_RULES) {
-    if (filename.includes(rule.keyword)) return rule.folder;
-  }
-  return null;
+/* ============================================================
+   FLOATING ACTIONS
+   ============================================================ */
+els.fabExport.addEventListener('click', () => {
+  els.exportPanel.scrollIntoView({ behavior: 'smooth' });
+});
+els.fabReset.addEventListener('click', () => {
+  if (!confirm('データをリセットしてアップロード画面に戻りますか？')) return;
+  state.allRows = [];
+  state.agencies = [];
+  state.files = [];
+  state.folderName = '';
+  state.currentTab = 'all';
+  clearFiles();
+  els.dataPanel.style.display   = 'none';
+  els.exportPanel.style.display = 'none';
+  els.uploadPanel.style.display = 'block';
+  els.floatingActions.style.display = 'none';
+  els.rowCount.textContent = '0';
+  sysLog('SYSTEM RESET', 'warn');
+  toast('リセットしました', 'warn');
+});
+
+/* ============================================================
+   UTILITIES
+   ============================================================ */
+function escHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
 }
+
+function fmtYen(val) {
+  const n = Number(val) || 0;
+  return '¥' + n.toLocaleString('ja-JP');
+}
+
+// 起動ログ
+sysLog('MEDIA-MGR v2.0 INITIALIZED', 'ok');
+sysLog('フォルダまたはExcelファイルをドロップしてください', 'info');

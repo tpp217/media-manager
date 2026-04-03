@@ -1,486 +1,299 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>内勤請求チェックシステム</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>媒体管理表システム // MEDIA-MGR v2.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+<!-- xlsx-js-style (スタイル書き込み対応版SheetJS) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<!-- JSZip (ヘッダー固定用XMLパッチに使用) -->
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div id="app">
-    <!-- ヘッダー -->
-    <header class="header">
-      <div class="header-inner">
-        <div class="header-logo">
-          <i class="fas fa-terminal"></i>
-          <div>
-            <div class="logo-main">[ BILLING_CHECK_SYS ]<span class="blink" style="margin-left:4px;">_</span></div>
-            <div class="logo-sub">v0.4.0 // AXIOM</div>
-          </div>
-        </div>
-        <div class="header-actions" style="display:flex;align-items:center;gap:0.75rem;">
-          <span style="font-family:var(--font-mono);font-size:0.65rem;color:var(--text-muted);letter-spacing:0.08em;" id="header-clock"></span>
-        </div>
-      </div>
-    </header>
+<!-- スキャンラインオーバーレイ -->
+<div class="scanline-overlay"></div>
+<!-- グリッドバックグラウンド -->
+<div class="grid-bg"></div>
 
-    <!-- ステップナビ -->
-    <nav class="step-nav">
-      <div class="step-nav-inner">
-        <div class="step-item active" data-step="1">
-          <div class="step-circle">1</div>
-          <div class="step-label">ファイルアップロード</div>
-        </div>
-        <div class="step-divider"></div>
-        <div class="step-item" data-step="2">
-          <div class="step-circle">2</div>
-          <div class="step-label">委託者情報取得</div>
-        </div>
-        <div class="step-divider"></div>
-        <div class="step-item" data-step="3">
-          <div class="step-circle">3</div>
-          <div class="step-label">日払い突合</div>
-        </div>
-        <div class="step-divider"></div>
-        <div class="step-item" data-step="4">
-          <div class="step-circle">4</div>
-          <div class="step-label">前月差分チェック</div>
-        </div>
-        <div class="step-divider"></div>
-        <div class="step-item" data-step="5">
-          <div class="step-circle">5</div>
-          <div class="step-label">内勤請求出力</div>
-        </div>
-      </div>
-    </nav>
-
-    <main class="main-content">
-
-      <!-- ステップ1: アップロード -->
-      <section id="step-1" class="step-section active">
-        <h2 class="step-title"><i class="fas fa-upload"></i> ファイルアップロード</h2>
-        <p class="step-desc">
-          業務報告書・月計表は必須です。DRファイルがある場合は一緒にアップロードしてください。<br>
-          店舗名・年月はファイル名から自動取得します。
-        </p>
-
-        <div class="upload-grid">
-          <!-- 業務報告書 -->
-          <div class="upload-card">
-            <div class="upload-card-header">
-              <i class="fas fa-file-excel"></i> 業務報告書 <span class="badge-required">必須</span>
-            </div>
-            <div class="drop-zone" id="drop-report">
-              <i class="fas fa-cloud-upload-alt drop-icon"></i>
-              <p>ここにドロップ<br>または</p>
-              <label class="btn btn-primary">
-                ファイルを選択
-                <input type="file" id="input-report" accept=".xlsx,.xls" style="display:none">
-              </label>
-            </div>
-            <div id="report-file-info" class="file-info hidden"></div>
-          </div>
-
-          <!-- 月計表 -->
-          <div class="upload-card">
-            <div class="upload-card-header">
-              <i class="fas fa-file-excel"></i> 月計表 <span class="badge-required">必須</span>
-            </div>
-            <div class="drop-zone" id="drop-monthly">
-              <i class="fas fa-cloud-upload-alt drop-icon"></i>
-              <p>ここにドロップ<br>または</p>
-              <label class="btn btn-primary">
-                ファイルを選択
-                <input type="file" id="input-monthly" accept=".xlsx,.xls" style="display:none">
-              </label>
-            </div>
-            <div id="monthly-file-info" class="file-info hidden"></div>
-          </div>
-
-          <!-- DRファイル -->
-          <div class="upload-card upload-card-optional">
-            <div class="upload-card-header upload-card-header-dr">
-              <i class="fas fa-car"></i> DR距離計算フォーマット <span class="badge-optional">任意</span>
-            </div>
-            <div class="drop-zone" id="drop-dr">
-              <i class="fas fa-cloud-upload-alt drop-icon"></i>
-              <p>ここにドロップ<br>または</p>
-              <label class="btn btn-primary">
-                ファイルを選択
-                <input type="file" id="input-dr" accept=".xlsx,.xls" style="display:none">
-              </label>
-            </div>
-            <div id="dr-file-info" class="file-info hidden"></div>
-          </div>
-        </div>
-
-        <!-- 自動検出結果 -->
-        <div id="detected-info" class="detected-info hidden">
-          <h3><i class="fas fa-store"></i> 自動検出結果</h3>
-          <div class="detected-grid">
-            <div class="detected-item">
-              <span class="detected-label">店舗名</span>
-              <span id="detected-store" class="detected-value">-</span>
-            </div>
-            <div class="detected-item">
-              <span class="detected-label">対象年月</span>
-              <span id="detected-period" class="detected-value">-</span>
-            </div>
-            <div class="detected-item" id="detected-dr-item" style="display:none">
-              <span class="detected-label">DRファイル</span>
-              <span id="detected-dr" class="detected-value" style="color:var(--success)">読み込み済み</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="step-actions">
-          <button id="btn-folder-organizer" class="btn btn-outline" style="font-size:0.8rem">
-            <i class="fas fa-folder-tree"></i> フォルダ整理
-          </button>
-          <button id="btn-step1-next" class="btn btn-primary btn-lg" disabled>
-            次へ：委託者情報取得 <i class="fas fa-arrow-right"></i>
-          </button>
-        </div>
-
-        <!-- 保存済みスナップショット一覧 -->
-        <div class="snapshot-panel" id="snapshot-panel">
-          <div class="snapshot-panel-header">
-            <span><i class="fas fa-database"></i> SAVED SNAPSHOTS</span>
-            <div style="display:flex;gap:0.4rem;align-items:center;">
-              <button id="btn-snapshot-select-delete" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.6rem;">
-                <i class="fas fa-trash-alt"></i> 選択削除
-              </button>
-              <button id="btn-snapshot-delete-run" class="btn btn-danger" style="font-size:0.72rem;padding:0.2rem 0.6rem;display:none;">
-                <i class="fas fa-trash-alt"></i> 削除する
-              </button>
-              <button id="btn-snapshot-delete-cancel" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.6rem;display:none;">
-                キャンセル
-              </button>
-              <button id="btn-bulk-import" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.6rem;">
-                <i class="fas fa-folder-open"></i> 一括インポート
-              </button>
-            </div>
-          </div>
-          <div id="snapshot-list" class="snapshot-list">
-            <div class="snapshot-empty"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>
-          </div>
-        </div>
-
-      </section>
-
-      <!-- ステップ2: 委託者情報取得 -->
-      <section id="step-2" class="step-section">
-        <h2 class="step-title"><i class="fas fa-users"></i> 委託者情報取得</h2>
-        <p class="step-desc">業務報告書から全員の情報を抽出します。</p>
-
-        <div class="step-actions">
-          <button id="btn-step2-back" class="btn btn-outline"><i class="fas fa-arrow-left"></i> 戻る</button>
-          <button id="btn-step2-next" class="btn btn-primary btn-lg" disabled>
-            次へ：日払い突合 <i class="fas fa-arrow-right"></i>
-          </button>
-        </div>
-
-        <div id="step2-loading" class="loading-block hidden">
-          <i class="fas fa-spinner fa-spin"></i> 解析中...
-        </div>
-        <div id="contractors-list" class="data-table-wrap hidden"></div>
-        <div id="step2-warnings" class="warnings-block hidden"></div>
-      </section>
-
-      <!-- ステップ3: 日払い突合 -->
-      <section id="step-3" class="step-section">
-        <h2 class="step-title"><i class="fas fa-balance-scale"></i> 日払い突合</h2>
-        <p class="step-desc">業務報告書・DRファイルの日払い額と月計表の取引入力を照合します。</p>
-
-        <div class="step-actions">
-          <button id="btn-step3-back" class="btn btn-outline"><i class="fas fa-arrow-left"></i> 戻る</button>
-          <button id="btn-step3-next" class="btn btn-primary btn-lg">
-            次へ：前月差分チェック <i class="fas fa-arrow-right"></i>
-          </button>
-        </div>
-
-        <div id="step3-loading" class="loading-block hidden">
-          <i class="fas fa-spinner fa-spin"></i> 突合処理中...
-        </div>
-
-        <!-- KPIカード -->
-        <div id="reconcile-kpi" class="kpi-row hidden">
-          <div class="kpi-card kpi-ok">
-            <div class="kpi-number" id="kpi-ok-count">0</div>
-            <div class="kpi-label">OK</div>
-          </div>
-          <div class="kpi-card kpi-ng">
-            <div class="kpi-number" id="kpi-ng-count">0</div>
-            <div class="kpi-label">NG（要確認）</div>
-          </div>
-          <div class="kpi-card" id="kpi-dr-card" style="border-left:4px solid var(--primary);display:none">
-            <div class="kpi-number" id="kpi-dr-count" style="color:var(--primary)">0</div>
-            <div class="kpi-label">DR件数</div>
-          </div>
-        </div>
-
-        <!-- タブ -->
-        <div class="tab-bar" id="reconcile-tabs">
-          <button class="tab-btn active" data-tab="tab-staff">
-            <i class="fas fa-user"></i> 業務委託
-          </button>
-          <button class="tab-btn" data-tab="tab-dr" id="tab-dr-btn" style="display:none">
-            <i class="fas fa-car"></i> DR
-          </button>
-        </div>
-
-        <!-- 業務委託タブ -->
-        <div id="tab-staff" class="tab-content active">
-          <div id="reconcile-list" class="data-table-wrap hidden"></div>
-        </div>
-
-        <!-- DRタブ -->
-        <div id="tab-dr" class="tab-content">
-          <div id="dr-reconcile-list" class="data-table-wrap hidden"></div>
-        </div>
-      </section>
-
-      <!-- ステップ4: 前月差分チェック -->
-      <section id="step-4" class="step-section">
-        <h2 class="step-title"><i class="fas fa-history"></i> 前月差分チェック</h2>
-        <p class="step-desc">先月のスナップショットと役職・基本給・振込先情報の変更を確認します。DRファイルがある場合はDRも差分チェックします。</p>
-
-        <div class="step-actions">
-          <button id="btn-step4-back" class="btn btn-outline"><i class="fas fa-arrow-left"></i> 戻る</button>
-          <button id="btn-step4-next" class="btn btn-primary btn-lg">
-            次へ：内勤請求出力 <i class="fas fa-arrow-right"></i>
-          </button>
-        </div>
-
-        <!-- Step4 タブ -->
-        <div class="tab-bar">
-          <button class="tab-btn active" data-tab="tab-diff-staff">
-            <i class="fas fa-user"></i> 業務委託
-          </button>
-          <button class="tab-btn" data-tab="tab-diff-dr" id="tab-diff-dr-btn" style="display:none">
-            <i class="fas fa-car"></i> DR
-          </button>
-        </div>
-
-        <div id="tab-diff-staff" class="tab-content active">
-          <div id="diff-staff-list" class="data-table-wrap"></div>
-        </div>
-        <div id="tab-diff-dr" class="tab-content">
-          <div id="diff-dr-list" class="data-table-wrap"></div>
-        </div>
-      </section>
-
-      <!-- ステップ5: 出力 -->
-      <section id="step-5" class="step-section">
-        <h2 class="step-title"><i class="fas fa-file-download"></i> 内勤請求出力</h2>
-        <p class="step-desc">業務報告書・DR距離計算フォーマットの個人タブをそのままコピーして出力します。書式・色・罫線が元ファイルと完全一致します。</p>
-
-        <div class="step-actions" style="flex-wrap:wrap;gap:0.5rem">
-          <button id="btn-step5-back" class="btn btn-outline"><i class="fas fa-arrow-left"></i> 戻る</button>
-          <div id="step5-download-group" style="display:flex;flex-wrap:wrap;gap:0.5rem;flex:1;justify-content:flex-end">
-            <button id="btn-step5-bulk-download" class="btn btn-success btn-lg" style="display:none">
-              <i class="fas fa-download"></i> 一括DL（業務委託＋DR）
-            </button>
-            <button id="btn-step5-download" class="btn btn-success btn-lg">
-              <i class="fas fa-download"></i> 内勤請求Excel
-            </button>
-            <button id="btn-step5-dr-download" class="btn btn-primary btn-lg" style="display:none">
-              <i class="fas fa-car"></i> DR請求Excel
-            </button>
-          </div>
-          <button id="btn-step5-restart" class="btn btn-outline btn-lg" style="white-space:nowrap">
-            <i class="fas fa-redo"></i> 最初に戻る
-          </button>
-        </div>
-
-        <div class="note-box">
-          <i class="fas fa-info-circle"></i>
-          <strong>元ファイルの個人タブをそのままコピーして出力します。</strong><br>
-          業務委託: 業務報告書の各個人タブ（折原・川原 等）をコピー。<br>
-          DR: 距離計算フォーマットの各個人タブ（加藤・★能條 等）をコピー。<br>
-          書式・罫線・色・結合はすべて元ファイルと完全一致します。
-        </div>
-      </section>
-
-    </main>
-    <div id="toast-container"></div>
-  </div>
-
-  <!-- スナップショット詳細モーダル -->
-  <div id="snapshot-modal" class="snap-modal-overlay" style="display:none">
-    <div class="snap-modal">
-      <div class="snap-modal-header">
-        <div>
-          <div class="snap-modal-title" id="snap-modal-title">─</div>
-          <div class="snap-modal-sub" id="snap-modal-sub">─</div>
-        </div>
-        <button class="snap-modal-close" id="snap-modal-close"><i class="fas fa-times"></i></button>
-      </div>
-      <div class="snap-modal-tabs">
-        <button class="snap-tab-btn active" data-snap-tab="snap-tab-people">
-          <i class="fas fa-users"></i> 委託者情報
-        </button>
-        <button class="snap-tab-btn" data-snap-tab="snap-tab-reconcile">
-          <i class="fas fa-balance-scale"></i> 日払い突合
-        </button>
-        <button class="snap-tab-btn" data-snap-tab="snap-tab-diff">
-          <i class="fas fa-history"></i> 前月差分
-        </button>
-      </div>
-      <div class="snap-modal-body">
-        <div id="snap-tab-people"  class="snap-tab-content active"></div>
-        <div id="snap-tab-reconcile" class="snap-tab-content"></div>
-        <div id="snap-tab-diff"    class="snap-tab-content"></div>
-      </div>
+<!-- ヘッダー -->
+<header class="hud-header">
+  <div class="header-corner tl"></div>
+  <div class="header-corner tr"></div>
+  <div class="header-corner bl"></div>
+  <div class="header-corner br"></div>
+  <div class="header-left">
+    <div class="sys-badge">SYS</div>
+    <div class="header-title">
+      <span class="title-main">MEDIA-MGR</span>
+      <span class="title-sub">媒体管理表システム // v2.0.26</span>
     </div>
   </div>
-
-  <!-- 一括インポートモーダル -->
-  <div id="bulk-import-modal" class="snap-modal-overlay" style="display:none">
-    <div class="snap-modal" style="max-width:760px">
-      <div class="snap-modal-header">
-        <div>
-          <div class="snap-modal-title"><i class="fas fa-folder-open"></i> 過去ファイル一括インポート</div>
-          <div class="snap-modal-sub">フォルダを選択するとファイルを自動分類してスナップショットを保存します</div>
-        </div>
-        <button class="snap-modal-close" id="bulk-modal-close"><i class="fas fa-times"></i></button>
-      </div>
-      <div class="snap-modal-body" style="padding:1rem">
-
-        <!-- 選択モード切り替え＋ドロップゾーン -->
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
-          <button id="bulk-mode-folder" class="btn btn-primary" style="font-size:0.78rem;flex:1">
-            <i class="fas fa-folder-open"></i> フォルダ選択
-          </button>
-          <button id="bulk-mode-file" class="btn btn-outline" style="font-size:0.78rem;flex:1">
-            <i class="fas fa-file-excel"></i> ファイル選択
-          </button>
-        </div>
-        <div id="bulk-drop-zone" style="border:2px dashed var(--border);border-radius:8px;padding:1.5rem;text-align:center;cursor:pointer;margin-bottom:1rem;transition:border-color .2s">
-          <input type="file" id="bulk-file-input" multiple webkitdirectory accept=".xlsx,.xls" style="display:none">
-          <i id="bulk-drop-icon" class="fas fa-folder-open" style="font-size:2rem;color:var(--text-muted);margin-bottom:0.5rem;display:block"></i>
-          <div id="bulk-drop-label" style="font-family:var(--font-mono);font-size:0.8rem;color:var(--text-muted)">クリックしてフォルダを選択</div>
-          <div id="bulk-drop-sub" style="font-size:0.72rem;color:var(--gray-400);margin-top:0.25rem">サブフォルダも含めて自動スキャンします。関係ないファイルは無視されます。</div>
-        </div>
-
-        <!-- 分類結果リスト -->
-        <div id="bulk-file-list" style="display:none;margin-bottom:1rem">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
-            <div style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted)">▸ 検出されたファイルセット</div>
-            <button id="btn-bulk-add" class="btn btn-outline" style="font-size:0.72rem;padding:0.2rem 0.6rem;">
-              <i class="fas fa-plus"></i> フォルダを追加
-            </button>
-          </div>
-          <input type="file" id="bulk-file-input-add-folder" multiple webkitdirectory accept=".xlsx,.xls" style="display:none">
-          <input type="file" id="bulk-file-input-add-file"   multiple accept=".xlsx,.xls" style="display:none">
-          <div id="bulk-file-table"></div>
-          <div id="bulk-ignored-count" style="font-size:0.72rem;color:var(--gray-400);margin-top:0.4rem;padding-left:0.25rem"></div>
-        </div>
-
-        <!-- 実行ボタン -->
-        <div id="bulk-actions" style="display:none;gap:0.5rem;justify-content:flex-end">
-          <button id="btn-bulk-cancel" class="btn btn-outline">キャンセル</button>
-          <button id="btn-bulk-run" class="btn btn-primary" disabled>
-            <i class="fas fa-play"></i> インポート実行
-          </button>
-        </div>
-
-        <!-- 進捗 -->
-        <div id="bulk-progress" style="display:none">
-          <div style="font-family:var(--font-mono);font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem">▸ 処理中...</div>
-          <div id="bulk-progress-bar-wrap" style="background:var(--gray-100);border-radius:4px;height:8px;margin-bottom:0.75rem">
-            <div id="bulk-progress-bar" style="height:8px;border-radius:4px;background:var(--primary);width:0%;transition:width .3s"></div>
-          </div>
-          <div id="bulk-progress-log" style="font-size:0.78rem;max-height:200px;overflow-y:auto;font-family:var(--font-mono)"></div>
-        </div>
-
-      </div>
+  <div class="header-center">
+    <div class="status-bar">
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-text" id="statusText">STANDBY</span>
+    </div>
+    <div class="data-counter">
+      <span class="counter-label">FILES</span>
+      <span class="counter-value" id="fileCount">0</span>
+      <span class="counter-label">ROWS</span>
+      <span class="counter-value" id="rowCount">0</span>
     </div>
   </div>
+  <div class="header-right">
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="date" id="dateDisplay">----/--/--</div>
+  </div>
+</header>
 
-  <script src="js/utils.js?v=202603300315"></script>
-  <script src="js/config.js?v=202603300315"></script>
-  <script src="js/db.js?v=202603300315"></script>
-  <script src="js/parser-report.js?v=202603300315"></script>
-  <script src="js/parser-monthly.js?v=202603300315"></script>
-  <script src="js/parser-dr.js?v=202603300315"></script>
-  <script src="js/reconcile.js?v=202603300315"></script>
-  <script src="js/diff.js?v=202603300315"></script>
-  <script src="js/output.js?v=202603300315"></script>
-  <script src="js/app.js?v=202603300315"></script>
-  <script>
-    // サイバーパンク時計
-    function updateClock() {
-      const el = document.getElementById('header-clock');
-      if (!el) return;
-      const now = new Date();
-      const pad = n => String(n).padStart(2,'0');
-      el.textContent = `SYS_TIME: ${now.getFullYear()}.${pad(now.getMonth()+1)}.${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-    }
-    updateClock();
-    setInterval(updateClock, 1000);
-  </script>
-</body>
+<!-- メインコンテナ -->
+<main class="main-container">
 
-  <!-- フォルダ整理モーダル -->
-  <div id="organizer-modal" class="snap-modal-overlay" style="display:none">
-    <div class="snap-modal" style="max-width:620px">
-      <div class="snap-modal-header">
-        <div>
-          <div class="snap-modal-title"><i class="fas fa-folder-tree"></i> フォルダ整理</div>
-          <div class="snap-modal-sub">ZIPを展開し、ファイルをキーワードで自動仕分けします</div>
-        </div>
-        <button class="snap-modal-close" id="organizer-modal-close"><i class="fas fa-times"></i></button>
+  <!-- ===== STEP 1: ファイルアップロード ===== -->
+  <section class="panel upload-panel" id="uploadPanel">
+    <div class="panel-header">
+      <div class="panel-title">
+        <span class="step-num">01</span>
+        <span class="panel-name">FILE UPLOAD &amp; INTEGRATE</span>
+        <span class="panel-desc">媒体管理表フォルダまたはExcelファイルをアップロード・統合</span>
       </div>
-
+      <div class="panel-status" id="uploadStatus">WAITING INPUT</div>
+    </div>
+    <div class="panel-body">
       <!-- ドロップゾーン -->
-      <div id="organizer-drop-zone" style="border:2px dashed var(--border);border-radius:8px;padding:2rem;text-align:center;cursor:pointer;transition:border-color .2s;margin-bottom:1rem">
-        <input type="file" id="organizer-file-input" multiple webkitdirectory style="display:none">
-        <i class="fas fa-folder-open" style="font-size:2rem;color:var(--text-muted);margin-bottom:0.5rem;display:block"></i>
-        <div style="font-size:0.85rem;color:var(--text-muted)">クリックして整理対象のフォルダを選択</div>
-        <div style="font-size:0.72rem;color:var(--gray-400);margin-top:0.3rem">フォルダ内のZIPを展開し、Excelをキーワードで自動仕分けします</div>
-      </div>
-
-      <!-- 仕分けルール表示 -->
-      <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:1rem;padding:0.6rem 0.8rem;background:var(--gray-50);border-radius:6px;border:1px solid var(--border)">
-        <div style="font-weight:700;margin-bottom:0.4rem;color:var(--text-secondary)"><i class="fas fa-info-circle"></i> 仕分けルール</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.25rem 1rem">
-          <span>📁 <code>業務報告書/</code> ← 「業務報告書」を含む（コピー）</span>
-          <span>📁 <code>各種統計/</code> ← 「各種統計」を含む（コピー）</span>
-          <span>📁 <code>店舗データ/</code> ← 「店舗データ」を含む（コピー）</span>
-          <span>📁 <code>内勤請求/</code> ← 空フォルダ作成</span>
-          <span>📁 <code>内勤請求/DR請求書/</code> ← 空フォルダ作成</span>
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-icon">
+          <!-- フォルダアイコン -->
+          <svg width="52" height="48" viewBox="0 0 52 48" fill="none">
+            <path d="M2 10C2 7.79 3.79 6 6 6H20L25 12H46C48.21 12 50 13.79 50 16V38C50 40.21 48.21 42 46 42H6C3.79 42 2 40.21 2 38V10Z" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M16 26v8M10 30h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
         </div>
-      </div>
-
-      <!-- ファイル一覧 -->
-      <div id="organizer-file-list" style="display:none;margin-bottom:1rem">
-        <div id="organizer-file-table"></div>
-      </div>
-
-      <!-- 進捗 -->
-      <div id="organizer-progress" style="display:none;margin-bottom:1rem">
-        <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.5rem"><i class="fas fa-spinner fa-spin"></i> 処理中...</div>
-        <div style="background:var(--gray-100);border-radius:4px;height:8px">
-          <div id="organizer-progress-bar" style="height:8px;border-radius:4px;background:var(--primary);width:0%;transition:width .3s"></div>
+        <div class="drop-text">
+          <p class="drop-main">フォルダまたはExcelファイルをドロップ</p>
+          <p class="drop-sub">
+            <label class="file-label" for="folderInput">📁 フォルダを選択</label>
+            &nbsp;または&nbsp;
+            <label class="file-label" for="fileInput">📄 ファイルを選択</label>
+          </p>
+          <p class="drop-hint">フォルダごとドロップ / .xlsx / .xls 複数ファイル対応</p>
         </div>
-        <div id="organizer-progress-log" style="font-size:0.72rem;color:var(--gray-400);margin-top:0.4rem;max-height:80px;overflow-y:auto"></div>
+        <input type="file" id="folderInput" webkitdirectory mozdirectory accept=".xlsx,.xls" hidden>
+        <input type="file" id="fileInput" accept=".xlsx,.xls" multiple hidden>
       </div>
 
-      <!-- アクションボタン -->
-      <div id="organizer-actions" style="display:none;gap:0.5rem;justify-content:flex-end;flex-wrap:wrap">
-        <button id="btn-organizer-cancel" class="btn btn-outline">キャンセル</button>
-        <button id="btn-organizer-run" class="btn btn-primary" disabled>
-          <i class="fas fa-play"></i> 整理して「整理済み締め書類」をダウンロード
+      <!-- フォルダ情報バー -->
+      <div class="folder-info-bar" id="folderInfoBar" style="display:none;">
+        <span class="folder-icon-sm">📁</span>
+        <span class="folder-name-label" id="folderName"></span>
+        <span class="folder-badge" id="folderBadge"></span>
+      </div>
+
+      <!-- アップロードファイルリスト -->
+      <div class="uploaded-files" id="uploadedFiles" style="display:none;">
+        <div class="files-header">
+          <span class="files-title" id="uploadedTitle">UPLOADED FILES</span>
+          <button class="btn-clear" id="btnClearFiles">✕ クリア</button>
+        </div>
+        <div class="files-list" id="filesList"></div>
+      </div>
+
+      <!-- 統合ボタン -->
+      <div class="action-row">
+        <button class="hud-btn btn-primary" id="btnIntegrate" disabled>
+          <span class="btn-icon">⬡</span>
+          <span>統合実行</span>
+          <span class="btn-glow"></span>
         </button>
+        <div class="process-info" id="processInfo"></div>
       </div>
     </div>
+  </section>
+
+  <!-- ===== STEP 2: データプレビュー・代理店タブ ===== -->
+  <section class="panel data-panel" id="dataPanel" style="display:none;">
+    <div class="panel-header">
+      <div class="panel-title">
+        <span class="step-num">02</span>
+        <span class="panel-name">DATA MATRIX</span>
+        <span class="panel-desc">統合データ / 代理店別ビュー</span>
+      </div>
+      <div class="panel-actions">
+        <button class="hud-btn btn-sm" id="btnBack">← BACK</button>
+        <div class="search-box">
+          <span class="search-icon">◈</span>
+          <input type="text" class="search-input" id="searchInput" placeholder="SEARCH...">
+        </div>
+      </div>
+    </div>
+
+    <!-- タブナビゲーション -->
+    <div class="tab-nav" id="tabNav">
+      <div class="tab-nav-scroll">
+        <button class="tab-btn active" data-tab="all">
+          <span class="tab-icon">◈</span>全データ
+        </button>
+        <!-- 代理店タブはJSで動的生成 -->
+      </div>
+    </div>
+
+    <!-- サマリーバー -->
+    <div class="summary-bar" id="summaryBar">
+      <div class="summary-item">
+        <span class="summary-label">TOTAL ROWS</span>
+        <span class="summary-value" id="summaryTotal">0</span>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">AGENCIES</span>
+        <span class="summary-value" id="summaryAgencies">0</span>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">TOTAL AMOUNT</span>
+        <span class="summary-value" id="summaryAmount">¥0</span>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">CURRENT VIEW</span>
+        <span class="summary-value" id="summaryView">ALL</span>
+      </div>
+    </div>
+
+    <!-- データテーブル -->
+    <div class="table-container" id="tableContainer">
+      <table class="data-table" id="dataTable">
+        <thead>
+          <tr>
+            <th data-col="brand" class="sortable">ブランド <span class="sort-icon">⇅</span></th>
+            <th data-col="category" class="sortable">カテゴリ <span class="sort-icon">⇅</span></th>
+            <th data-col="agency" class="sortable">代理店 <span class="sort-icon">⇅</span></th>
+            <th data-col="media" class="sortable">媒体 <span class="sort-icon">⇅</span></th>
+            <th data-col="plan" class="sortable">プラン <span class="sort-icon">⇅</span></th>
+            <th data-col="note">備考</th>
+            <th data-col="amount" class="sortable num">金額 <span class="sort-icon">⇅</span></th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <!-- ページネーション -->
+    <div class="pagination" id="pagination"></div>
+
+    <!-- 次へボタン -->
+    <div class="action-row" style="margin-top:1rem;">
+      <button class="hud-btn btn-primary" id="btnToExport">
+        <span class="btn-icon">→</span>
+        <span>EXPORT MODULE へ</span>
+        <span class="btn-glow"></span>
+      </button>
+    </div>
+  </section>
+
+  <!-- ===== STEP 3: Excel出力 ===== -->
+  <section class="panel export-panel" id="exportPanel" style="display:none;">
+    <div class="panel-header">
+      <div class="panel-title">
+        <span class="step-num">03</span>
+        <span class="panel-name">EXPORT MODULE</span>
+        <span class="panel-desc">代理店別Excelファイル出力</span>
+      </div>
+    </div>
+    <div class="panel-body export-body">
+
+      <!-- 統合ファイル出力 -->
+      <div class="export-card">
+        <div class="export-card-header">
+          <div class="export-card-icon">⬡</div>
+          <div class="export-card-title">
+            <div class="export-card-name">統合ファイル出力</div>
+            <div class="export-card-desc">全代理店データをシート別に統合</div>
+          </div>
+        </div>
+        <div class="export-filename-row">
+          <span class="filename-label">ファイル名:</span>
+          <input type="text" class="filename-input" id="masterFileName" value="【まとめ】媒体管理表2026.4">
+          <span class="filename-ext">.xlsx</span>
+        </div>
+        <div class="export-options">
+          <label class="option-check">
+            <input type="checkbox" id="optAllSheet" checked>
+            <span class="checkmark"></span>
+            全データシートを含む
+          </label>
+          <label class="option-check">
+            <input type="checkbox" id="optAgencySheets" checked>
+            <span class="checkmark"></span>
+            代理店別シートを含む
+          </label>
+        </div>
+        <button class="hud-btn btn-export" id="btnExportMaster">
+          <span class="btn-icon">⬇</span>
+          <span>統合Excelをダウンロード</span>
+          <span class="btn-glow"></span>
+        </button>
+      </div>
+
+      <!-- 代理店別個別出力 -->
+      <div class="export-card">
+        <div class="export-card-header">
+          <div class="export-card-icon" style="color:#00ff41">◈</div>
+          <div class="export-card-title">
+            <div class="export-card-name">代理店別個別出力</div>
+            <div class="export-card-desc">選択した代理店のデータのみ出力</div>
+          </div>
+        </div>
+        <div class="agency-select-area">
+          <div class="agency-select-header">
+            <span>代理店を選択:</span>
+            <div class="select-btns">
+              <button class="btn-xs" id="btnSelectAll">全選択</button>
+              <button class="btn-xs" id="btnDeselectAll">解除</button>
+            </div>
+          </div>
+          <div class="agency-checkboxes" id="agencyCheckboxes"></div>
+        </div>
+        <div class="export-prefix-row">
+          <span class="filename-label">ファイル名プレフィックス:</span>
+          <input type="text" class="filename-input" id="agencyFilePrefix" value="媒体管理表2026.4">
+        </div>
+        <button class="hud-btn btn-export btn-green" id="btnExportAgency">
+          <span class="btn-icon">⬇</span>
+          <span>選択代理店をダウンロード</span>
+          <span class="btn-glow"></span>
+        </button>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<!-- フローティング操作パネル -->
+<div class="floating-actions" id="floatingActions" style="display:none;">
+  <button class="fab" id="fabExport" title="Excel出力">
+    <span>⬇</span>
+    <span class="fab-label">出力</span>
+  </button>
+  <button class="fab fab-secondary" id="fabReset" title="リセット">
+    <span>↺</span>
+    <span class="fab-label">Reset</span>
+  </button>
+</div>
+
+<!-- ログコンソール -->
+<div class="log-console" id="logConsole">
+  <div class="log-header">
+    <span class="log-title">SYSTEM LOG</span>
+    <button class="log-toggle" id="logToggle">▼</button>
   </div>
+  <div class="log-body" id="logBody"></div>
+</div>
+
+<!-- トースト通知 -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="js/app.js"></script>
+</body>
 </html>
