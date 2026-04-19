@@ -726,7 +726,7 @@ els.btnLoadPast.addEventListener('click', async () => {
         .map(r => ({
           brand: r.brand, category: r.category, agency: r.agency,
           media: r.media, plan: r.plan, note: r.note, amount: Number(r.amount) || 0,
-          _colors: {}, _src: f.filename
+          _colors: r.colors || {}, _src: f.filename
         }))
     }));
 
