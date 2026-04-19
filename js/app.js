@@ -520,7 +520,14 @@ async function saveAllFilesToDb() {
   let saved = 0;
   for (const f of readyFiles) {
     try {
-      const result = await saveFileToDb(f.name, state.folderName, f.rows);
+      // ファイル自身の月ベースで folder_name を生成（まとめアップロード時のズレを回避）
+      const fileMonth = extractMonth(f.name);
+      let perFileFolder = state.folderName;
+      if (fileMonth) {
+        const [y, m] = fileMonth.split('-');
+        perFileFolder = `媒体管理表${y}.${parseInt(m, 10)}`;
+      }
+      const result = await saveFileToDb(f.name, perFileFolder, f.rows);
       saved++;
       sysLog(`  ${f.name} → ${result.row_count}行 (month: ${result.month})`, 'ok');
     } catch (err) {
@@ -740,12 +747,12 @@ els.btnLoadPast.addEventListener('click', async () => {
       if (r.agency && !state.agencies.includes(r.agency)) state.agencies.push(r.agency);
     });
 
-    // ファイル名用: "2026-05" → "2026.5" (元の命名規則に合わせる)
+    // ファイル名用: 表示する月から直接生成 "2026-05" → "媒体管理表2026.5"
+    // (DBの folder_name はアップロード時の state.folderName を保存しているため、
+    // 複数月をまとめてアップロードしたファイルだと実月とズレる可能性があり使わない)
     const [y, m] = month.split('-');
     const displayMonth = `${y}.${parseInt(m, 10)}`;
-    // 保存時の folder_name があればそれを優先（アップロード時と同じファイル名になる）
-    const savedFolderName = files[0]?.folder_name;
-    const baseName = savedFolderName || `媒体管理表${displayMonth}`;
+    const baseName = `媒体管理表${displayMonth}`;
 
     state.folderName = `[DB] ${month}`;
     els.masterFileName.value = `【まとめ】${baseName}`;
