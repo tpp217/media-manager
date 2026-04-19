@@ -106,7 +106,9 @@ body{
    ============================================================ */
 .main-container{
   position:relative;z-index:2;
-  max-width:1400px;margin:0 auto;padding:1.5rem;
+  max-width:1400px;margin:0 auto;
+  /* bottom: 8rem = log-console max-height + 余白。ログ展開時もボタンが隠れない */
+  padding:1.5rem 1.5rem 10rem;
   display:flex;flex-direction:column;gap:1.5rem;
 }
 
@@ -460,26 +462,6 @@ body{
 .agency-cb-label input{display:none;}
 .agency-cb-label input:checked ~ span{color:var(--gold);}
 .agency-cb-label:has(input:checked){border-color:var(--gold);background:rgba(255,215,0,.06);}
-
-/* ============================================================
-   FLOATING ACTIONS
-   ============================================================ */
-.floating-actions{
-  position:fixed;bottom:5rem;left:1.5rem;
-  display:flex;flex-direction:column;gap:.5rem;z-index:200;
-}
-.fab{
-  width:48px;height:48px;border-radius:0;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-  background:rgba(10,8,0,.9);border:1px solid var(--gold);
-  color:var(--gold);cursor:pointer;font-size:.9rem;
-  clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
-  transition:all .2s;
-}
-.fab:hover{background:rgba(255,215,0,.1);box-shadow:0 0 15px rgba(255,215,0,.2);}
-.fab.fab-secondary{border-color:var(--gray-dim);color:var(--gray);}
-.fab.fab-secondary:hover{border-color:var(--gold);color:var(--gold);}
-.fab-label{font-size:.45rem;letter-spacing:.1em;font-family:var(--font-mono);}
 
 /* ============================================================
    LOG CONSOLE
