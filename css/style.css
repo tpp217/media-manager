@@ -398,8 +398,35 @@ body{
 .data-table tr.row-new td{background:rgba(0,255,65,.08);border-left:2px solid var(--green-acc);}
 .data-table tr.row-new:hover td{background:rgba(0,255,65,.14);}
 .data-table tr.row-new td:first-child{border-left:2px solid var(--green-acc);}
+/* 削除行（前月にあり今月に無い）を薄グレー */
+.data-table tr.row-removed td{color:var(--gray);background:rgba(136,136,136,.08);font-style:italic;}
+.data-table tr.row-removed:hover td{background:rgba(136,136,136,.14);}
+.data-table tr.row-removed td:first-child{border-left:2px solid var(--gray-dim);}
 /* 前月比較サマリー */
 .summary-item.summary-diff .summary-value{color:var(--green-acc);}
+
+/* ============================================================
+   DIFF TOOLTIP (ホバーで前月値表示)
+   ============================================================ */
+.diff-tooltip{
+  position:fixed;z-index:500;pointer-events:none;
+  background:rgba(5,4,0,.97);border:1px solid var(--gold);
+  padding:.5rem .7rem;min-width:200px;max-width:320px;
+  font-family:var(--font-mono);font-size:.65rem;color:var(--white);
+  box-shadow:0 0 20px rgba(255,215,0,.25);
+  clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px));
+}
+.diff-tt-title{
+  font-family:var(--font-orb);font-size:.6rem;color:var(--gold);
+  letter-spacing:.1em;margin-bottom:.3rem;padding-bottom:.25rem;
+  border-bottom:1px solid var(--gold-dim);
+}
+.diff-tt-row{display:flex;gap:.5rem;padding:.1rem 0;}
+.diff-tt-label{color:var(--gray);min-width:3.5rem;flex-shrink:0;}
+.diff-tt-val{color:var(--white);word-break:break-all;}
+.diff-tt-val.diff-up{color:var(--green-acc);}
+.diff-tt-val.diff-down{color:var(--danger);}
+.diff-tt-note{color:var(--gray);font-size:.58rem;margin-top:.3rem;font-style:italic;}
 
 /* ============================================================
    PAGINATION
