@@ -475,6 +475,12 @@ function integrateFiles() {
       els.exportPanel.style.display = 'block';
 
       toast(`統合完了: ${state.allRows.length}行 / ${state.agencies.length}代理店`, 'success');
+
+      // DB保存（非同期・UIをブロックしない）
+      saveAllFilesToDb().catch(err => {
+        sysLog('DB保存失敗: ' + err.message, 'error');
+        toast('DB保存に失敗しました: ' + err.message, 'error');
+      });
     } catch(err) {
       hideLoading();
       toast('統合処理でエラーが発生しました: ' + err.message, 'error');
@@ -484,6 +490,28 @@ function integrateFiles() {
 }
 
 els.btnIntegrate.addEventListener('click', integrateFiles);
+
+/**
+ * 現在のstate.filesをファイル単位でDBに保存（同名は上書き）
+ */
+async function saveAllFilesToDb() {
+  const readyFiles = state.files.filter(f => f.status === 'ready');
+  if (readyFiles.length === 0) return;
+
+  sysLog(`DB保存開始: ${readyFiles.length}ファイル`, 'ok');
+  let saved = 0;
+  for (const f of readyFiles) {
+    try {
+      const result = await saveFileToDb(f.name, state.folderName, f.rows);
+      saved++;
+      sysLog(`  ${f.name} → ${result.row_count}行 (month: ${result.month})`, 'ok');
+    } catch (err) {
+      sysLog(`  ${f.name} 保存失敗: ${err.message}`, 'error');
+      throw err;
+    }
+  }
+  toast(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'success');
+}
 
 /* ============================================================
    TABS
