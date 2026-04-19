@@ -1,10 +1,11 @@
 /**
  * config.js - アプリ設定
  *
- * APIキーはここで設定します。
- * このファイルは .gitignore に追加してください（本番運用時）。
+ * Supabase の URL と anon key は「公開前提」の値です。
+ * セキュリティは Supabase 側の RLS（Row Level Security）ポリシーで担保します。
  */
 
-// tpp-api の認証キー
-// 販売先クライアントの場合はここを差し替えるだけでOK
-window.TPP_API_KEY = 'a0ea116d6d2e7825390a4ca9e808f6f174087e9abf2fd89bb2e26750c6db1b80';
+'use strict';
+
+window.SUPABASE_URL = 'https://bjxclepuflcjxbjdqbaa.supabase.co';
+window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqeGNsZXB1ZmxjanhiamRxYmFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MTQyNTksImV4cCI6MjA5MjE5MDI1OX0.74cJIFgWkvavpfnsPe_P81tRG9FggzC-DbZNJYyN-JM';
