@@ -67,7 +67,6 @@ const els = {
   optAllSheet:     $('optAllSheet'),
   optAgencySheets: $('optAgencySheets'),
   floatingActions: $('floatingActions'),
-  fabExport:       $('fabExport'),
   fabReset:        $('fabReset'),
   logConsole:      $('logConsole'),
   logBody:         $('logBody'),
@@ -977,9 +976,6 @@ async function writeWorkbook(wb, fname) {
 /* ============================================================
    FLOATING ACTIONS
    ============================================================ */
-els.fabExport.addEventListener('click', () => {
-  els.exportPanel.scrollIntoView({ behavior: 'smooth' });
-});
 els.fabReset.addEventListener('click', () => {
   if (!confirm('データをリセットしてアップロード画面に戻りますか？')) return;
   state.allRows = [];
