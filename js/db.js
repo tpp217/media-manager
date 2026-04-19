@@ -91,3 +91,51 @@ async function saveFileToDb(filename, folderName, rows) {
 
   return { id: fileData.id, month, row_count: rows.length };
 }
+
+/**
+ * 保存済みの月一覧を取得（ファイル数・行数集計付き・新しい順）
+ * @returns {Promise<Array<{month: string, file_count: number, total_rows: number}>>}
+ */
+async function getSavedMonths() {
+  const { data, error } = await supabaseClient
+    .from('files')
+    .select('month, row_count');
+  if (error) throw error;
+
+  const grouped = {};
+  for (const f of data) {
+    if (!grouped[f.month]) grouped[f.month] = { file_count: 0, total_rows: 0 };
+    grouped[f.month].file_count++;
+    grouped[f.month].total_rows += (f.row_count || 0);
+  }
+
+  return Object.entries(grouped)
+    .map(([month, stat]) => ({ month, ...stat }))
+    .sort((a, b) => b.month.localeCompare(a.month));
+}
+
+/**
+ * 指定月のファイル＋行データを全取得
+ * @param {string} month - "2026-04" 形式
+ * @returns {Promise<{files: Array, rows: Array}>}
+ */
+async function loadMonthData(month) {
+  const { data: files, error: fErr } = await supabaseClient
+    .from('files')
+    .select('*')
+    .eq('month', month)
+    .order('uploaded_at');
+  if (fErr) throw fErr;
+
+  if (files.length === 0) return { files: [], rows: [] };
+
+  const fileIds = files.map(f => f.id);
+  const { data: rows, error: rErr } = await supabaseClient
+    .from('rows')
+    .select('*')
+    .in('file_id', fileIds)
+    .order('row_index');
+  if (rErr) throw rErr;
+
+  return { files, rows };
+}
