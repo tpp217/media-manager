@@ -66,8 +66,6 @@ const els = {
   btnDeselectAll:  $('btnDeselectAll'),
   optAllSheet:     $('optAllSheet'),
   optAgencySheets: $('optAgencySheets'),
-  floatingActions: $('floatingActions'),
-  fabReset:        $('fabReset'),
   logConsole:      $('logConsole'),
   logBody:         $('logBody'),
   logToggle:       $('logToggle'),
@@ -475,7 +473,6 @@ function integrateFiles() {
       els.uploadPanel.style.display = 'none';
       els.dataPanel.style.display = 'block';
       els.exportPanel.style.display = 'block';
-      els.floatingActions.style.display = 'flex';
 
       toast(`統合完了: ${state.allRows.length}行 / ${state.agencies.length}代理店`, 'success');
     } catch(err) {
@@ -622,7 +619,6 @@ els.btnBack.addEventListener('click', () => {
   els.dataPanel.style.display = 'none';
   els.exportPanel.style.display = 'none';
   els.uploadPanel.style.display = 'block';
-  els.floatingActions.style.display = 'none';
 });
 
 // DATA→EXPORT
@@ -972,26 +968,6 @@ async function writeWorkbook(wb, fname) {
   a.click();
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
-
-/* ============================================================
-   FLOATING ACTIONS
-   ============================================================ */
-els.fabReset.addEventListener('click', () => {
-  if (!confirm('データをリセットしてアップロード画面に戻りますか？')) return;
-  state.allRows = [];
-  state.agencies = [];
-  state.files = [];
-  state.folderName = '';
-  state.currentTab = 'all';
-  clearFiles();
-  els.dataPanel.style.display   = 'none';
-  els.exportPanel.style.display = 'none';
-  els.uploadPanel.style.display = 'block';
-  els.floatingActions.style.display = 'none';
-  els.rowCount.textContent = '0';
-  sysLog('SYSTEM RESET', 'warn');
-  toast('リセットしました', 'warn');
-});
 
 /* ============================================================
    UTILITIES
