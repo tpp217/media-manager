@@ -244,11 +244,19 @@ function handleFiles(newFiles, folderName) {
     return;
   }
 
-  if (folderName) {
-    state.folderName = folderName;
-    // ファイル名の自動設定
-    els.masterFileName.value = `【まとめ】${folderName}`;
-    els.agencyFilePrefix.value = folderName;
+  // ファイル名のベース: フォルダ名優先、無ければ先頭ファイル名から月を抽出
+  let baseName = folderName;
+  if (!baseName) {
+    const month = extractMonth(newFiles[0].name);
+    if (month) {
+      const [y, m] = month.split('-');
+      baseName = `媒体管理表${y}.${parseInt(m, 10)}`;
+    }
+  }
+  if (baseName) {
+    state.folderName = baseName;
+    els.masterFileName.value = `【まとめ】${baseName}`;
+    els.agencyFilePrefix.value = baseName;
   }
 
   newFiles.forEach(file => {
@@ -756,6 +764,9 @@ els.btnBack.addEventListener('click', () => {
     els.rowCount.textContent = '0';
     els.pastMonthSelect.value = '';
     els.btnLoadPast.disabled = true;
+    // ファイル名入力欄もクリア（次のアップロード時にファイル名から再設定される）
+    els.masterFileName.value = '';
+    els.agencyFilePrefix.value = '';
   }
 });
 
