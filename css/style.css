@@ -465,7 +465,7 @@ body{
    FLOATING ACTIONS
    ============================================================ */
 .floating-actions{
-  position:fixed;bottom:5rem;right:1.5rem;
+  position:fixed;bottom:5rem;left:1.5rem;
   display:flex;flex-direction:column;gap:.5rem;z-index:200;
 }
 .fab{
