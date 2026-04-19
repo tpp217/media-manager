@@ -559,7 +559,7 @@ async function applyDiffHighlight(currentMonth) {
     state.diffInfo = { prevMonth, newCount };
     els.summaryPrevMonth.textContent = prevMonth;
     els.summaryDiffCount.textContent = newCount.toLocaleString();
-    els.summaryDiffWrap.style.display = 'flex';
+    els.summaryDiffWrap.style.display = '';
 
     sysLog(`前月比較: ${prevMonth} と比較 / 新規・変更 ${newCount}行`, 'ok');
     renderTable();
@@ -725,6 +725,11 @@ function renderTable() {
   els.summaryAgencies.textContent = state.agencies.length;
   els.summaryAmount.textContent = '¥' + totalAmount.toLocaleString();
   els.summaryView.textContent = state.currentTab === 'all' ? 'ALL' : state.currentTab;
+  // 前月比較件数は現在ビューに合わせて更新
+  if (state.diffInfo) {
+    const newInView = viewRows.filter(r => r._isNew).length;
+    els.summaryDiffCount.textContent = newInView.toLocaleString();
+  }
 
   renderPagination(pages);
 
@@ -1075,11 +1080,9 @@ function buildSheet(rows) {
       const addr  = XLSX.utils.encode_cell({ r: rowIdx, c: ci });
       const isAmt = ci === 6;
 
-      // 原本の背景色を取得（なければ白）。ただし _isNew (前月と違う) なら上書きで薄緑
+      // 原本の背景色を取得（なければ白）
       const srcRgb = (r._colors && r._colors[ci]) || null;
-      const fillColor = r._isNew
-        ? { rgb: 'C8F7C5' }
-        : (srcRgb ? { rgb: srcRgb } : { rgb: 'FFFFFF' });
+      const fillColor = srcRgb ? { rgb: srcRgb } : { rgb: 'FFFFFF' };
 
       const style = {
         fill: { fgColor: fillColor },
