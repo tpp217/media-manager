@@ -70,6 +70,8 @@ const els = {
   logBody:         $('logBody'),
   logToggle:       $('logToggle'),
   toastContainer:  $('toastContainer'),
+  pastMonthSelect: $('pastMonthSelect'),
+  btnLoadPast:     $('btnLoadPast'),
 };
 
 /* ============================================================
@@ -512,7 +514,98 @@ async function saveAllFilesToDb() {
   }
   sysLog(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'ok');
   toast(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'success');
+  // 保存後、月一覧を更新
+  refreshPastMonthList().catch(err => sysLog('月一覧の更新に失敗: ' + err.message, 'warn'));
 }
+
+/* ============================================================
+   PAST DATA (DB)
+   ============================================================ */
+async function refreshPastMonthList() {
+  try {
+    const months = await getSavedMonths();
+    els.pastMonthSelect.innerHTML = '<option value="">-- 月を選択 --</option>' +
+      months.map(m =>
+        `<option value="${m.month}">${m.month}（${m.file_count}ファイル / ${m.total_rows}行）</option>`
+      ).join('');
+    sysLog(`月一覧取得: ${months.length}件`, 'ok');
+  } catch (err) {
+    sysLog('月一覧の取得に失敗: ' + err.message, 'error');
+    throw err;
+  }
+}
+
+els.pastMonthSelect.addEventListener('change', () => {
+  els.btnLoadPast.disabled = !els.pastMonthSelect.value;
+});
+
+els.btnLoadPast.addEventListener('click', async () => {
+  const month = els.pastMonthSelect.value;
+  if (!month) return;
+
+  showLoading('LOADING...', `${month} のデータを取得中`);
+  try {
+    const { files, rows } = await loadMonthData(month);
+    if (files.length === 0) {
+      hideLoading();
+      toast('データが見つかりません', 'warn');
+      return;
+    }
+
+    // stateを再構築（DB行 → app用行フォーマット）
+    const fileMap = {};
+    files.forEach(f => { fileMap[f.id] = f; });
+
+    state.files = files.map(f => ({
+      file: null, name: f.filename, size: 0, status: 'ready', wb: null,
+      rows: rows.filter(r => r.file_id === f.id)
+        .map(r => ({
+          brand: r.brand, category: r.category, agency: r.agency,
+          media: r.media, plan: r.plan, note: r.note, amount: Number(r.amount) || 0,
+          _colors: {}, _src: f.filename
+        }))
+    }));
+
+    state.allRows = [];
+    state.files.forEach(f => {
+      f.rows.forEach(row => state.allRows.push({ ...row, _file: f.name }));
+    });
+
+    state.agencies = [];
+    state.allRows.forEach(r => {
+      if (r.agency && !state.agencies.includes(r.agency)) state.agencies.push(r.agency);
+    });
+
+    state.folderName = `[DB] ${month}`;
+    els.masterFileName.value = `【まとめ】媒体管理表${month}`;
+    els.agencyFilePrefix.value = `媒体管理表${month}`;
+
+    state.currentTab = 'all';
+    state.searchQuery = '';
+    state.sortCol = null;
+    state.page = 1;
+
+    els.rowCount.textContent = state.allRows.length;
+    renderTabs();
+    renderTable();
+    renderExportPanel();
+
+    els.uploadPanel.style.display = 'none';
+    els.dataPanel.style.display = 'block';
+    els.exportPanel.style.display = 'block';
+
+    hideLoading();
+    sysLog(`過去データ読み込み: ${month} / ${files.length}ファイル / ${state.allRows.length}行`, 'ok');
+    toast(`${month} を読み込みました（${state.allRows.length}行）`, 'success');
+  } catch (err) {
+    hideLoading();
+    sysLog('過去データ読み込み失敗: ' + err.message, 'error');
+    toast('読み込み失敗: ' + err.message, 'error');
+  }
+});
+
+// 初回ロード時に月一覧を取得
+refreshPastMonthList().catch(() => {});
 
 /* ============================================================
    TABS
@@ -648,6 +741,15 @@ els.btnBack.addEventListener('click', () => {
   els.dataPanel.style.display = 'none';
   els.exportPanel.style.display = 'none';
   els.uploadPanel.style.display = 'block';
+  // DB由来のデータから戻った場合はクリア（新規アップロードと混ざらないように）
+  if (state.folderName && state.folderName.startsWith('[DB] ')) {
+    clearFiles();
+    state.allRows = [];
+    state.agencies = [];
+    els.rowCount.textContent = '0';
+    els.pastMonthSelect.value = '';
+    els.btnLoadPast.disabled = true;
+  }
 });
 
 // DATA→EXPORT
