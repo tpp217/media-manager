@@ -394,6 +394,12 @@ body{
 .data-table tr:hover td{background:rgba(255,215,0,.05);}
 .data-table td.p-amount{text-align:right;font-family:var(--font-mono);color:var(--gold);}
 .data-table tbody tr:last-child td{border-bottom:none;}
+/* 前月と違う行（新規・変更）のハイライト */
+.data-table tr.row-new td{background:rgba(0,255,65,.08);border-left:2px solid var(--green-acc);}
+.data-table tr.row-new:hover td{background:rgba(0,255,65,.14);}
+.data-table tr.row-new td:first-child{border-left:2px solid var(--green-acc);}
+/* 前月比較サマリー */
+.summary-item.summary-diff .summary-value{color:var(--green-acc);}
 
 /* ============================================================
    PAGINATION
