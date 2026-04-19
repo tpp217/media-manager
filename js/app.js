@@ -510,6 +510,7 @@ async function saveAllFilesToDb() {
       throw err;
     }
   }
+  sysLog(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'ok');
   toast(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'success');
 }
 
