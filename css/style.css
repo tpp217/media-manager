@@ -314,6 +314,8 @@ body{
 }
 .past-select:focus{border-color:var(--gold);}
 .past-select:disabled{opacity:.5;cursor:not-allowed;}
+/* option はOS/ブラウザのネイティブ描画になるため、暗背景＋明文字を明示指定 */
+.past-select option{background:var(--bg-black);color:var(--white);}
 
 /* ============================================================
    TAB NAV

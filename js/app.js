@@ -576,9 +576,16 @@ els.btnLoadPast.addEventListener('click', async () => {
       if (r.agency && !state.agencies.includes(r.agency)) state.agencies.push(r.agency);
     });
 
+    // ファイル名用: "2026-05" → "2026.5" (元の命名規則に合わせる)
+    const [y, m] = month.split('-');
+    const displayMonth = `${y}.${parseInt(m, 10)}`;
+    // 保存時の folder_name があればそれを優先（アップロード時と同じファイル名になる）
+    const savedFolderName = files[0]?.folder_name;
+    const baseName = savedFolderName || `媒体管理表${displayMonth}`;
+
     state.folderName = `[DB] ${month}`;
-    els.masterFileName.value = `【まとめ】媒体管理表${month}`;
-    els.agencyFilePrefix.value = `媒体管理表${month}`;
+    els.masterFileName.value = `【まとめ】${baseName}`;
+    els.agencyFilePrefix.value = baseName;
 
     state.currentTab = 'all';
     state.searchQuery = '';
