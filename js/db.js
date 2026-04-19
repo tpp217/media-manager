@@ -115,6 +115,39 @@ async function getSavedMonths() {
 }
 
 /**
+ * 月を±nシフト（年跨ぎ対応）
+ */
+function shiftMonth(ym, delta) {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * 前月の全行ハッシュのSetを取得（差分ハイライト用）
+ * @param {string} currentMonth - "2026-05"形式
+ * @returns {Promise<{prevMonth: string, hashes: Set<string>}>}
+ */
+async function getPrevMonthHashes(currentMonth) {
+  const prevMonth = shiftMonth(currentMonth, -1);
+  const { data: files, error: fErr } = await supabaseClient
+    .from('files')
+    .select('id')
+    .eq('month', prevMonth);
+  if (fErr) throw fErr;
+  if (files.length === 0) return { prevMonth, hashes: new Set() };
+
+  const fileIds = files.map(f => f.id);
+  const { data: rows, error: rErr } = await supabaseClient
+    .from('rows')
+    .select('row_hash')
+    .in('file_id', fileIds);
+  if (rErr) throw rErr;
+
+  return { prevMonth, hashes: new Set(rows.map(r => r.row_hash)) };
+}
+
+/**
  * 指定月のファイル＋行データを全取得
  * @param {string} month - "2026-04" 形式
  * @returns {Promise<{files: Array, rows: Array}>}

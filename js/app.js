@@ -20,6 +20,7 @@ const state = {
   page: 1,
   pageSize: 50,
   previewTarget: null, // {type:'master'|'agency', agencies:[]}
+  diffInfo: null,      // {prevMonth, newCount} - 前月比較の情報
 };
 
 /* ============================================================
@@ -72,6 +73,9 @@ const els = {
   toastContainer:  $('toastContainer'),
   pastMonthSelect: $('pastMonthSelect'),
   btnLoadPast:     $('btnLoadPast'),
+  summaryDiffWrap: $('summaryDiffWrap'),
+  summaryPrevMonth:$('summaryPrevMonth'),
+  summaryDiffCount:$('summaryDiffCount'),
 };
 
 /* ============================================================
@@ -486,10 +490,13 @@ function integrateFiles() {
 
       toast(`統合完了: ${state.allRows.length}行 / ${state.agencies.length}代理店`, 'success');
 
-      // DB保存（非同期・UIをブロックしない）
-      saveAllFilesToDb().catch(err => {
-        sysLog('DB保存失敗: ' + err.message, 'error');
-        toast('DB保存に失敗しました: ' + err.message, 'error');
+      // DB保存 → 前月比較（どちらも非同期・UIをブロックしない）
+      saveAllFilesToDb().then(() => {
+        const currentMonth = state.files[0] && extractMonth(state.files[0].name);
+        if (currentMonth) return applyDiffHighlight(currentMonth);
+      }).catch(err => {
+        sysLog('DB処理失敗: ' + err.message, 'error');
+        toast('DB処理に失敗しました: ' + err.message, 'error');
       });
     } catch(err) {
       hideLoading();
@@ -524,6 +531,42 @@ async function saveAllFilesToDb() {
   toast(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'success');
   // 保存後、月一覧を更新
   refreshPastMonthList().catch(err => sysLog('月一覧の更新に失敗: ' + err.message, 'warn'));
+}
+
+/**
+ * 前月のハッシュと比較して、今月にしかない（＝前月と違う）行に _isNew マークを付ける。
+ * 「全列一致でない行」は全て新規扱い（ケースC: 1列でも違えば別物）。
+ */
+async function applyDiffHighlight(currentMonth) {
+  try {
+    const { prevMonth, hashes } = await getPrevMonthHashes(currentMonth);
+
+    if (hashes.size === 0) {
+      sysLog(`前月(${prevMonth})のデータがないため、差分ハイライトなし`, 'warn');
+      state.diffInfo = null;
+      els.summaryDiffWrap.style.display = 'none';
+      return;
+    }
+
+    // 各行のハッシュを計算してマーク
+    let newCount = 0;
+    await Promise.all(state.allRows.map(async r => {
+      const h = await computeRowHash(r);
+      r._isNew = !hashes.has(h);
+      if (r._isNew) newCount++;
+    }));
+
+    state.diffInfo = { prevMonth, newCount };
+    els.summaryPrevMonth.textContent = prevMonth;
+    els.summaryDiffCount.textContent = newCount.toLocaleString();
+    els.summaryDiffWrap.style.display = '';
+
+    sysLog(`前月比較: ${prevMonth} と比較 / 新規・変更 ${newCount}行`, 'ok');
+    renderTable();
+  } catch (err) {
+    sysLog('前月比較失敗: ' + err.message, 'error');
+    throw err;
+  }
 }
 
 /* ============================================================
@@ -612,6 +655,9 @@ els.btnLoadPast.addEventListener('click', async () => {
     hideLoading();
     sysLog(`過去データ読み込み: ${month} / ${files.length}ファイル / ${state.allRows.length}行`, 'ok');
     toast(`${month} を読み込みました（${state.allRows.length}行）`, 'success');
+
+    // 前月比較（非同期）
+    applyDiffHighlight(month).catch(err => sysLog('前月比較失敗: ' + err.message, 'warn'));
   } catch (err) {
     hideLoading();
     sysLog('過去データ読み込み失敗: ' + err.message, 'error');
@@ -661,7 +707,7 @@ function renderTable() {
   const slice = rows.slice(start, start + state.pageSize);
 
   els.tableBody.innerHTML = slice.map(r => `
-    <tr>
+    <tr${r._isNew ? ' class="row-new"' : ''}>
       <td>${escHtml(r.brand)}</td>
       <td>${escHtml(r.category)}</td>
       <td>${escHtml(r.agency)}</td>
@@ -679,6 +725,11 @@ function renderTable() {
   els.summaryAgencies.textContent = state.agencies.length;
   els.summaryAmount.textContent = '¥' + totalAmount.toLocaleString();
   els.summaryView.textContent = state.currentTab === 'all' ? 'ALL' : state.currentTab;
+  // 前月比較件数は現在ビューに合わせて更新
+  if (state.diffInfo) {
+    const newInView = viewRows.filter(r => r._isNew).length;
+    els.summaryDiffCount.textContent = newInView.toLocaleString();
+  }
 
   renderPagination(pages);
 
@@ -768,6 +819,9 @@ els.btnBack.addEventListener('click', () => {
     els.masterFileName.value = '';
     els.agencyFilePrefix.value = '';
   }
+  // 前月比較情報をクリア
+  state.diffInfo = null;
+  els.summaryDiffWrap.style.display = 'none';
 });
 
 // DATA→EXPORT
