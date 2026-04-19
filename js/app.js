@@ -20,7 +20,8 @@ const state = {
   page: 1,
   pageSize: 50,
   previewTarget: null, // {type:'master'|'agency', agencies:[]}
-  diffInfo: null,      // {prevMonth, newCount} - 前月比較の情報
+  diffInfo: null,      // {prevMonth, newCount, removedCount}
+  removedRows: [],     // 前月にあって今月に無い行（薄グレー表示用）
 };
 
 /* ============================================================
@@ -519,7 +520,14 @@ async function saveAllFilesToDb() {
   let saved = 0;
   for (const f of readyFiles) {
     try {
-      const result = await saveFileToDb(f.name, state.folderName, f.rows);
+      // ファイル自身の月ベースで folder_name を生成（まとめアップロード時のズレを回避）
+      const fileMonth = extractMonth(f.name);
+      let perFileFolder = state.folderName;
+      if (fileMonth) {
+        const [y, m] = fileMonth.split('-');
+        perFileFolder = `媒体管理表${y}.${parseInt(m, 10)}`;
+      }
+      const result = await saveFileToDb(f.name, perFileFolder, f.rows);
       saved++;
       sysLog(`  ${f.name} → ${result.row_count}行 (month: ${result.month})`, 'ok');
     } catch (err) {
@@ -533,35 +541,147 @@ async function saveAllFilesToDb() {
   refreshPastMonthList().catch(err => sysLog('月一覧の更新に失敗: ' + err.message, 'warn'));
 }
 
+/* ============================================================
+   DIFF TOOLTIP
+   ============================================================ */
+function buildTooltipHTML(r) {
+  if (r._isRemoved) {
+    return `<div class="diff-tt-title">前月のみ (消滅)</div>
+      <div class="diff-tt-row"><span class="diff-tt-label">ブランド</span><span class="diff-tt-val">${escHtml(r.brand)}</span></div>
+      <div class="diff-tt-row"><span class="diff-tt-label">代理店</span><span class="diff-tt-val">${escHtml(r.agency)}</span></div>
+      <div class="diff-tt-row"><span class="diff-tt-label">媒体</span><span class="diff-tt-val">${escHtml(r.media)}</span></div>
+      <div class="diff-tt-row"><span class="diff-tt-label">プラン</span><span class="diff-tt-val">${escHtml(r.plan)}</span></div>
+      <div class="diff-tt-row"><span class="diff-tt-label">金額</span><span class="diff-tt-val">${fmtYen(r.amount)}</span></div>
+      <div class="diff-tt-note">今月は該当行がありません</div>`;
+  }
+
+  const prev = r._prevMatch;
+  if (!r._isNew) return null; // 変更なし行はツールチップ不要
+  if (!prev) {
+    return `<div class="diff-tt-title">前月に該当なし（完全に新規）</div>
+      <div class="diff-tt-note">ブランド+代理店+媒体+プランで一致する前月行なし</div>`;
+  }
+
+  // 変更点を検出
+  const rows = [];
+  const pairs = [
+    ['カテゴリ', 'category', r.category, prev.category],
+    ['備考',     'note',     r.note,     prev.note],
+  ];
+  for (const [label, key, cur, pv] of pairs) {
+    if (String(cur ?? '') !== String(pv ?? '')) {
+      rows.push(`<div class="diff-tt-row"><span class="diff-tt-label">${label}</span><span class="diff-tt-val">${escHtml(pv || '(空)')} → ${escHtml(cur || '(空)')}</span></div>`);
+    }
+  }
+  const curAmt = Number(r.amount) || 0;
+  const pvAmt = Number(prev.amount) || 0;
+  if (curAmt !== pvAmt) {
+    const delta = curAmt - pvAmt;
+    const cls = delta > 0 ? 'diff-up' : 'diff-down';
+    const sign = delta > 0 ? '+' : '';
+    rows.push(`<div class="diff-tt-row"><span class="diff-tt-label">金額</span><span class="diff-tt-val ${cls}">${fmtYen(pvAmt)} → ${fmtYen(curAmt)} (${sign}${fmtYen(delta)})</span></div>`);
+  }
+
+  if (rows.length === 0) {
+    return `<div class="diff-tt-title">変更あり</div>
+      <div class="diff-tt-note">キー項目外(カテゴリ/備考/金額)は同じ。他の差異のみ</div>`;
+  }
+
+  return `<div class="diff-tt-title">前月との変化</div>${rows.join('')}`;
+}
+
+function initDiffTooltip() {
+  const tt = $('diffTooltip');
+  const tbody = els.tableBody;
+
+  tbody.addEventListener('mouseenter', e => {
+    const tr = e.target.closest('tr');
+    if (!tr || !tr.dataset.idx) return;
+    const idx = parseInt(tr.dataset.idx, 10);
+    const r = (window._displayedRows || [])[idx];
+    if (!r) return;
+    const html = buildTooltipHTML(r);
+    if (!html) return;
+    tt.innerHTML = html;
+    tt.style.display = 'block';
+  }, true);
+
+  tbody.addEventListener('mousemove', e => {
+    if (tt.style.display === 'none') return;
+    const pad = 16;
+    let x = e.clientX + pad, y = e.clientY + pad;
+    const rect = tt.getBoundingClientRect();
+    if (x + rect.width > window.innerWidth)  x = e.clientX - rect.width - pad;
+    if (y + rect.height > window.innerHeight) y = e.clientY - rect.height - pad;
+    tt.style.left = `${Math.max(0, x)}px`;
+    tt.style.top  = `${Math.max(0, y)}px`;
+  });
+
+  tbody.addEventListener('mouseleave', () => { tt.style.display = 'none'; }, true);
+}
+initDiffTooltip();
+
 /**
- * 前月のハッシュと比較して、今月にしかない（＝前月と違う）行に _isNew マークを付ける。
- * 「全列一致でない行」は全て新規扱い（ケースC: 1列でも違えば別物）。
+ * 行の「突合キー」（ブランド + 代理店 + 媒体 + プラン）
+ * 完全一致ハッシュ(全列)とは別の、ゆるめのキー。ツールチップで前月値を引くのに使う。
+ */
+function softKey(r) {
+  return [r.brand ?? '', r.agency ?? '', r.media ?? '', r.plan ?? ''].join('\u0001');
+}
+
+/**
+ * 前月データと比較して、今月の各行にマーク＋前月候補を添付。
+ * - _isNew: ケースC(全列一致ハッシュ)で前月に無い行
+ * - _prevMatch: 突合キーで見つけた前月の同じ項目(なければnull)
+ * 削除された行(前月にあり今月に無い)は state.removedRows に格納。
  */
 async function applyDiffHighlight(currentMonth) {
   try {
-    const { prevMonth, hashes } = await getPrevMonthHashes(currentMonth);
+    const { prevMonth, rows: prevRows } = await getPrevMonthRows(currentMonth);
 
-    if (hashes.size === 0) {
+    if (prevRows.length === 0) {
       sysLog(`前月(${prevMonth})のデータがないため、差分ハイライトなし`, 'warn');
       state.diffInfo = null;
+      state.removedRows = [];
       els.summaryDiffWrap.style.display = 'none';
+      renderTable();
       return;
     }
 
-    // 各行のハッシュを計算してマーク
+    // 前月データをハッシュSet＋softKey→rowマップに整理
+    const prevHashSet = new Set(prevRows.map(r => r.row_hash));
+    const prevBySoftKey = new Map();
+    for (const pr of prevRows) {
+      prevBySoftKey.set(softKey(pr), pr);
+    }
+
+    // 現在行: ハッシュ算出 + softKeyで前月候補添付
     let newCount = 0;
     await Promise.all(state.allRows.map(async r => {
       const h = await computeRowHash(r);
-      r._isNew = !hashes.has(h);
+      r._isNew = !prevHashSet.has(h);
+      r._prevMatch = prevBySoftKey.get(softKey(r)) || null;
       if (r._isNew) newCount++;
     }));
 
-    state.diffInfo = { prevMonth, newCount };
+    // 削除行: 前月にあって今月に無い = softKeyが今月に存在しない
+    const currentKeys = new Set(state.allRows.map(softKey));
+    state.removedRows = prevRows
+      .filter(pr => !currentKeys.has(softKey(pr)))
+      .map(pr => ({
+        brand: pr.brand, category: pr.category, agency: pr.agency,
+        media: pr.media, plan: pr.plan, note: pr.note,
+        amount: Number(pr.amount) || 0,
+        _isRemoved: true,
+      }));
+
+    state.diffInfo = { prevMonth, newCount, removedCount: state.removedRows.length };
     els.summaryPrevMonth.textContent = prevMonth;
-    els.summaryDiffCount.textContent = newCount.toLocaleString();
+    els.summaryDiffCount.textContent =
+      `${newCount.toLocaleString()} / -${state.removedRows.length.toLocaleString()}`;
     els.summaryDiffWrap.style.display = '';
 
-    sysLog(`前月比較: ${prevMonth} と比較 / 新規・変更 ${newCount}行`, 'ok');
+    sysLog(`前月比較: ${prevMonth} / 新規・変更 ${newCount} / 削除 ${state.removedRows.length}`, 'ok');
     renderTable();
   } catch (err) {
     sysLog('前月比較失敗: ' + err.message, 'error');
@@ -613,7 +733,7 @@ els.btnLoadPast.addEventListener('click', async () => {
         .map(r => ({
           brand: r.brand, category: r.category, agency: r.agency,
           media: r.media, plan: r.plan, note: r.note, amount: Number(r.amount) || 0,
-          _colors: {}, _src: f.filename
+          _colors: r.colors || {}, _src: f.filename
         }))
     }));
 
@@ -627,12 +747,12 @@ els.btnLoadPast.addEventListener('click', async () => {
       if (r.agency && !state.agencies.includes(r.agency)) state.agencies.push(r.agency);
     });
 
-    // ファイル名用: "2026-05" → "2026.5" (元の命名規則に合わせる)
+    // ファイル名用: 表示する月から直接生成 "2026-05" → "媒体管理表2026.5"
+    // (DBの folder_name はアップロード時の state.folderName を保存しているため、
+    // 複数月をまとめてアップロードしたファイルだと実月とズレる可能性があり使わない)
     const [y, m] = month.split('-');
     const displayMonth = `${y}.${parseInt(m, 10)}`;
-    // 保存時の folder_name があればそれを優先（アップロード時と同じファイル名になる）
-    const savedFolderName = files[0]?.folder_name;
-    const baseName = savedFolderName || `媒体管理表${displayMonth}`;
+    const baseName = `媒体管理表${displayMonth}`;
 
     state.folderName = `[DB] ${month}`;
     els.masterFileName.value = `【まとめ】${baseName}`;
@@ -706,8 +826,13 @@ function renderTable() {
   const start = (state.page - 1) * state.pageSize;
   const slice = rows.slice(start, start + state.pageSize);
 
-  els.tableBody.innerHTML = slice.map(r => `
-    <tr${r._isNew ? ' class="row-new"' : ''}>
+  // ツールチップ検索用に、ページ内の行を window 側にインデックス保持
+  window._displayedRows = slice;
+
+  els.tableBody.innerHTML = slice.map((r, i) => {
+    const cls = r._isRemoved ? 'row-removed' : (r._isNew ? 'row-new' : '');
+    return `
+    <tr${cls ? ` class="${cls}"` : ''} data-idx="${i}">
       <td>${escHtml(r.brand)}</td>
       <td>${escHtml(r.category)}</td>
       <td>${escHtml(r.agency)}</td>
@@ -715,8 +840,8 @@ function renderTable() {
       <td>${escHtml(r.plan)}</td>
       <td>${escHtml(r.note)}</td>
       <td class="p-amount">${fmtYen(r.amount)}</td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 
   // サマリー
   const viewRows = state.currentTab === 'all' ? state.allRows : state.allRows.filter(r => r.agency === state.currentTab);
@@ -725,10 +850,12 @@ function renderTable() {
   els.summaryAgencies.textContent = state.agencies.length;
   els.summaryAmount.textContent = '¥' + totalAmount.toLocaleString();
   els.summaryView.textContent = state.currentTab === 'all' ? 'ALL' : state.currentTab;
-  // 前月比較件数は現在ビューに合わせて更新
+  // 前月比較件数は現在ビューに合わせて更新（新規 / -削除）
   if (state.diffInfo) {
     const newInView = viewRows.filter(r => r._isNew).length;
-    els.summaryDiffCount.textContent = newInView.toLocaleString();
+    const tabFilter = r => state.currentTab === 'all' || r.agency === state.currentTab;
+    const removedInView = (state.removedRows || []).filter(tabFilter).length;
+    els.summaryDiffCount.textContent = `${newInView.toLocaleString()} / -${removedInView.toLocaleString()}`;
   }
 
   renderPagination(pages);
@@ -756,16 +883,11 @@ function renderTable() {
 }
 
 function filteredRows() {
-  let rows = state.currentTab === 'all'
-    ? [...state.allRows]
-    : state.allRows.filter(r => r.agency === state.currentTab);
-
+  const tabFilter = r => state.currentTab === 'all' || r.agency === state.currentTab;
   const q = state.searchQuery.trim().toLowerCase();
-  if (q) {
-    rows = rows.filter(r =>
-      Object.values(r).some(v => String(v).toLowerCase().includes(q))
-    );
-  }
+  const searchFilter = r => !q || Object.values(r).some(v => String(v).toLowerCase().includes(q));
+
+  let rows = state.allRows.filter(tabFilter).filter(searchFilter);
 
   if (state.sortCol) {
     rows.sort((a, b) => {
@@ -777,7 +899,10 @@ function filteredRows() {
       return 0;
     });
   }
-  return rows;
+
+  // 削除行（前月のみの行）は末尾に付ける。同じフィルタを適用
+  const removed = (state.removedRows || []).filter(tabFilter).filter(searchFilter);
+  return rows.concat(removed);
 }
 
 function renderPagination(pages) {
@@ -821,6 +946,7 @@ els.btnBack.addEventListener('click', () => {
   }
   // 前月比較情報をクリア
   state.diffInfo = null;
+  state.removedRows = [];
   els.summaryDiffWrap.style.display = 'none';
 });
 

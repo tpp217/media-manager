@@ -78,7 +78,8 @@ async function saveFileToDb(filename, folderName, rows) {
     note: r.note ?? '',
     amount: Number(r.amount) || 0,
     row_index: idx,
-    row_hash: await computeRowHash(r)
+    row_hash: await computeRowHash(r),
+    colors: r._colors || {}
   })));
 
   // 1000件ずつバッチ挿入（Supabaseの上限対策）
@@ -124,27 +125,27 @@ function shiftMonth(ym, delta) {
 }
 
 /**
- * 前月の全行ハッシュのSetを取得（差分ハイライト用）
+ * 前月の全行データを取得（差分ハイライト＋ツールチップ用）
  * @param {string} currentMonth - "2026-05"形式
- * @returns {Promise<{prevMonth: string, hashes: Set<string>}>}
+ * @returns {Promise<{prevMonth: string, rows: Array}>}
  */
-async function getPrevMonthHashes(currentMonth) {
+async function getPrevMonthRows(currentMonth) {
   const prevMonth = shiftMonth(currentMonth, -1);
   const { data: files, error: fErr } = await supabaseClient
     .from('files')
     .select('id')
     .eq('month', prevMonth);
   if (fErr) throw fErr;
-  if (files.length === 0) return { prevMonth, hashes: new Set() };
+  if (files.length === 0) return { prevMonth, rows: [] };
 
   const fileIds = files.map(f => f.id);
   const { data: rows, error: rErr } = await supabaseClient
     .from('rows')
-    .select('row_hash')
+    .select('*')
     .in('file_id', fileIds);
   if (rErr) throw rErr;
 
-  return { prevMonth, hashes: new Set(rows.map(r => r.row_hash)) };
+  return { prevMonth, rows };
 }
 
 /**
