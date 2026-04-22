@@ -3,34 +3,32 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>媒体管理表システム // MEDIA-MGR v2.0</title>
+<title>媒体管理表システム</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <!-- xlsx-js-style (スタイル書き込み対応版SheetJS) -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <!-- JSZip (ヘッダー固定用XMLパッチに使用) -->
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <!-- Supabase JS SDK -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css?v=202604230001">
+<script>
+  // iframe内で開かれた場合、HUBのトップバーと重複するヘッダを非表示にする
+  if (window.self !== window.top) {
+    document.documentElement.classList.add('is-embedded');
+  }
+</script>
 </head>
 <body>
-<!-- スキャンラインオーバーレイ -->
-<div class="scanline-overlay"></div>
-<!-- グリッドバックグラウンド -->
-<div class="grid-bg"></div>
-
 <!-- ヘッダー -->
 <header class="hud-header">
-  <div class="header-corner tl"></div>
-  <div class="header-corner tr"></div>
-  <div class="header-corner bl"></div>
-  <div class="header-corner br"></div>
   <div class="header-left">
-    <div class="sys-badge">SYS</div>
+    <div class="sys-badge">MGR</div>
     <div class="header-title">
-      <span class="title-main">MEDIA-MGR</span>
-      <span class="title-sub">媒体管理表システム // v2.0.26</span>
+      <span class="title-main">媒体管理表システム</span>
+      <span class="title-sub">MEDIA-MGR / v2.0</span>
     </div>
   </div>
   <div class="header-center">
@@ -59,10 +57,10 @@
     <div class="panel-header">
       <div class="panel-title">
         <span class="step-num">01</span>
-        <span class="panel-name">FILE UPLOAD &amp; INTEGRATE</span>
+        <span class="panel-name">ファイルアップロード・統合</span>
         <span class="panel-desc">媒体管理表フォルダまたはExcelファイルをアップロード・統合</span>
       </div>
-      <div class="panel-status" id="uploadStatus">WAITING INPUT</div>
+      <div class="panel-status" id="uploadStatus">待機中</div>
     </div>
     <div class="panel-body">
       <!-- ドロップゾーン -->
@@ -97,8 +95,8 @@
       <!-- アップロードファイルリスト -->
       <div class="uploaded-files" id="uploadedFiles" style="display:none;">
         <div class="files-header">
-          <span class="files-title" id="uploadedTitle">UPLOADED FILES</span>
-          <button class="btn-clear" id="btnClearFiles">✕ クリア</button>
+          <span class="files-title" id="uploadedTitle">アップロード済みファイル</span>
+          <button class="btn-clear" id="btnClearFiles">× クリア</button>
         </div>
         <div class="files-list" id="filesList"></div>
       </div>
@@ -106,9 +104,7 @@
       <!-- 統合ボタン -->
       <div class="action-row">
         <button class="hud-btn btn-primary" id="btnIntegrate" disabled>
-          <span class="btn-icon">⬡</span>
           <span>統合実行</span>
-          <span class="btn-glow"></span>
         </button>
         <div class="process-info" id="processInfo"></div>
       </div>
@@ -116,7 +112,6 @@
       <!-- 過去データから再出力 -->
       <div class="past-data-section" id="pastDataSection">
         <div class="past-label">
-          <span class="past-label-icon">◆</span>
           <span>過去データから再出力</span>
         </div>
         <div class="past-controls">
@@ -134,14 +129,14 @@
     <div class="panel-header">
       <div class="panel-title">
         <span class="step-num">02</span>
-        <span class="panel-name">DATA MATRIX</span>
+        <span class="panel-name">データ一覧</span>
         <span class="panel-desc">統合データ / 代理店別ビュー</span>
       </div>
       <div class="panel-actions">
-        <button class="hud-btn btn-sm" id="btnBack">← BACK</button>
+        <button class="hud-btn btn-sm" id="btnBack">← 戻る</button>
         <div class="search-box">
-          <span class="search-icon">◈</span>
-          <input type="text" class="search-input" id="searchInput" placeholder="SEARCH...">
+          <span class="search-icon">⌕</span>
+          <input type="text" class="search-input" id="searchInput" placeholder="検索...">
         </div>
       </div>
     </div>
@@ -149,9 +144,7 @@
     <!-- タブナビゲーション -->
     <div class="tab-nav" id="tabNav">
       <div class="tab-nav-scroll">
-        <button class="tab-btn active" data-tab="all">
-          <span class="tab-icon">◈</span>全データ
-        </button>
+        <button class="tab-btn active" data-tab="all">全データ</button>
         <!-- 代理店タブはJSで動的生成 -->
       </div>
     </div>
@@ -159,20 +152,20 @@
     <!-- サマリーバー -->
     <div class="summary-bar" id="summaryBar">
       <div class="summary-item">
-        <span class="summary-label">TOTAL ROWS</span>
+        <span class="summary-label">総行数</span>
         <span class="summary-value" id="summaryTotal">0</span>
       </div>
       <div class="summary-item">
-        <span class="summary-label">AGENCIES</span>
+        <span class="summary-label">代理店数</span>
         <span class="summary-value" id="summaryAgencies">0</span>
       </div>
       <div class="summary-item">
-        <span class="summary-label">TOTAL AMOUNT</span>
+        <span class="summary-label">合計金額</span>
         <span class="summary-value" id="summaryAmount">¥0</span>
       </div>
       <div class="summary-item">
-        <span class="summary-label">CURRENT VIEW</span>
-        <span class="summary-value" id="summaryView">ALL</span>
+        <span class="summary-label">表示中</span>
+        <span class="summary-value" id="summaryView">全件</span>
       </div>
       <div class="summary-item summary-diff" id="summaryDiffWrap" style="display:none;">
         <span class="summary-label">vs <span id="summaryPrevMonth">--</span></span>
@@ -202,11 +195,9 @@
     <div class="pagination" id="pagination"></div>
 
     <!-- 次へボタン -->
-    <div class="action-row" style="margin-top:1rem;">
+    <div class="action-row" style="margin-top:12px;padding:0 16px 16px;">
       <button class="hud-btn btn-primary" id="btnToExport">
-        <span class="btn-icon">→</span>
-        <span>EXPORT MODULE へ</span>
-        <span class="btn-glow"></span>
+        <span>Excel出力へ進む →</span>
       </button>
     </div>
   </section>
@@ -216,7 +207,7 @@
     <div class="panel-header">
       <div class="panel-title">
         <span class="step-num">03</span>
-        <span class="panel-name">EXPORT MODULE</span>
+        <span class="panel-name">Excel出力</span>
         <span class="panel-desc">代理店別Excelファイル出力</span>
       </div>
     </div>
@@ -225,7 +216,7 @@
       <!-- 統合ファイル出力 -->
       <div class="export-card">
         <div class="export-card-header">
-          <div class="export-card-icon">⬡</div>
+          <div class="export-card-icon">▣</div>
           <div class="export-card-title">
             <div class="export-card-name">統合ファイル出力</div>
             <div class="export-card-desc">全代理店データをシート別に統合</div>
@@ -249,16 +240,14 @@
           </label>
         </div>
         <button class="hud-btn btn-export" id="btnExportMaster">
-          <span class="btn-icon">⬇</span>
           <span>統合Excelをダウンロード</span>
-          <span class="btn-glow"></span>
         </button>
       </div>
 
       <!-- 代理店別個別出力 -->
       <div class="export-card">
         <div class="export-card-header">
-          <div class="export-card-icon" style="color:#00ff41">◈</div>
+          <div class="export-card-icon">▤</div>
           <div class="export-card-title">
             <div class="export-card-name">代理店別個別出力</div>
             <div class="export-card-desc">選択した代理店のデータのみ出力</div>
@@ -279,9 +268,7 @@
           <input type="text" class="filename-input" id="agencyFilePrefix" value="媒体管理表2026.4">
         </div>
         <button class="hud-btn btn-export btn-green" id="btnExportAgency">
-          <span class="btn-icon">⬇</span>
           <span>選択代理店をダウンロード</span>
-          <span class="btn-glow"></span>
         </button>
       </div>
 
@@ -294,10 +281,10 @@
 <div class="diff-tooltip" id="diffTooltip" style="display:none;"></div>
 
 <!-- ログコンソール -->
-<div class="log-console" id="logConsole">
+<div class="log-console collapsed" id="logConsole">
   <div class="log-header">
-    <span class="log-title">SYSTEM LOG</span>
-    <button class="log-toggle" id="logToggle">▼</button>
+    <span class="log-title">システムログ</span>
+    <button class="log-toggle" id="logToggle">▾</button>
   </div>
   <div class="log-body" id="logBody"></div>
 </div>
