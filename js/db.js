@@ -79,7 +79,8 @@ async function saveFileToDb(filename, folderName, rows) {
     amount: Number(r.amount) || 0,
     row_index: idx,
     row_hash: await computeRowHash(r),
-    colors: r._colors || {}
+    // _colors は列インデックスで参照する配列。未設定時も配列で統一する（buildSheet の r._colors[ci] と型を揃える）
+    colors: r._colors || []
   })));
 
   // 1000件ずつバッチ挿入（Supabaseの上限対策）

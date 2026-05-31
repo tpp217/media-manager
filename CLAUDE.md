@@ -8,7 +8,9 @@
 media-manager/
 ├── index.html       # メイン HTML
 ├── css/style.css    # サイバーパンク Yellow テーマ
-├── js/app.js        # 全ロジック（読み込み・統合・タブ・出力）
+├── js/config.js     # Supabase 接続情報（URL / anon キー）
+├── js/db.js         # Supabase クライアント（files / rows の保存・前月比較）
+├── js/app.js        # 全ロジック（読み込み・統合・タブ・出力・前月差分）
 ├── favicon.svg
 └── vercel.json
 ```
@@ -33,8 +35,9 @@ media-manager/
 
 ## 注意事項
 
-- **Supabase は使っていない**: 完全クライアントサイド処理（ファイルはブラウザ内のみ）
-- **`sales-insight` の Supabase プロジェクトは media-manager プロジェクト相乗り**: media-manager 自体は DB を使わないが、Supabase プロジェクト名として共有されている。混同しない
+- **Supabase を使用している**: 統合した行データを `js/db.js` 経由で Supabase の `files` / `rows` テーブルに保存し、前月比較（差分ハイライト・ツールチップ）に利用する。接続情報は `js/config.js`（`SUPABASE_URL` / `SUPABASE_ANON_KEY`）。Excel の読み込み・統合・出力自体はブラウザ内で完結する
+- **`sales-insight` と Supabase プロジェクトを相乗り**: media-manager は同じ Supabase プロジェクトに `files` / `rows` を持ち、`sales-insight` と共有している。混同しない
+- **セキュリティ留意**: 現状は anon キーで `files` / `rows` を直接 insert/delete しているため、RLS 設定に依存する。書き込み権限の制御は Supabase 側で要確認
 - **原本色反映**: SheetJS で読んだ cell スタイルを保ったまま書き戻す処理がコアバリュー。`app.js` のスタイル保持ロジックを壊さない
 - **デザイン**: サイバーパンク Yellow は他システムと違うので、operation-hub の design-spec には準拠**しない**例外プロジェクト
 
