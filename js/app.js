@@ -733,7 +733,8 @@ els.btnLoadPast.addEventListener('click', async () => {
         .map(r => ({
           brand: r.brand, category: r.category, agency: r.agency,
           media: r.media, plan: r.plan, note: r.note, amount: Number(r.amount) || 0,
-          _colors: r.colors || {}, _src: f.filename
+          // _colors は列インデックス参照の配列。DB の colors が無い場合も配列で復元する
+          _colors: r.colors || [], _src: f.filename
         }))
     }));
 
@@ -885,7 +886,9 @@ function renderTable() {
 function filteredRows() {
   const tabFilter = r => state.currentTab === 'all' || r.agency === state.currentTab;
   const q = state.searchQuery.trim().toLowerCase();
-  const searchFilter = r => !q || Object.values(r).some(v => String(v).toLowerCase().includes(q));
+  // 検索対象は可視列のみに限定（_colors/_src 等の内部フィールドが [object Object] で誤マッチするのを防ぐ）
+  const SEARCH_FIELDS = ['brand', 'category', 'agency', 'media', 'plan', 'note', 'amount'];
+  const searchFilter = r => !q || SEARCH_FIELDS.some(k => String(r[k] ?? '').toLowerCase().includes(q));
 
   let rows = state.allRows.filter(tabFilter).filter(searchFilter);
 
