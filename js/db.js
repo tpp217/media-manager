@@ -1,30 +1,43 @@
 /**
- * db.js - Supabase クライアント
+ * db.js - データアクセス層（サーバー API 経由）
  *
- * アップロードされたファイルと解析済みの行データをSupabaseに保存する。
- * 同じファイル名が既に存在する場合は上書き（既存を削除して再挿入）。
+ * 旧版はブラウザから匿名キーで Supabase を直叩きしていたが、匿名 read/write が
+ * 開放状態になるため、サーバー（Vercel Functions / service_role）経由に変更。
+ * 匿名キーはクライアントから撤去済み。関数シグネチャは従来どおり。
  */
 
 'use strict';
 
-const supabaseClient = window.supabase.createClient(
-  window.SUPABASE_URL,
-  window.SUPABASE_ANON_KEY
-);
+// ── API 呼び出し共通 ─────────────────────────────────────────
+async function apiFetch(path, { method = 'GET', body } = {}) {
+  const res = await fetch(path, {
+    method,
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) {
+    window.location.href = '/api/auth/line/login';
+    throw new Error('未認証のためログインへリダイレクトします');
+  }
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`API ${res.status}: ${t.slice(0, 200)}`);
+  }
+  const t = await res.text();
+  return t ? JSON.parse(t) : null;
+}
 
-/**
- * ファイル名から月を抽出
- * 例: "媒体管理表2026.4.xlsx" → "2026-04"
- */
+// ── クライアント側ヘルパー（DB非依存・従来どおり） ──────────
+
+/** ファイル名から月を抽出 例: "媒体管理表2026.4.xlsx" → "2026-04" */
 function extractMonth(filename) {
   const m = filename.match(/(\d{4})\.(\d{1,2})/);
   if (!m) return null;
   return `${m[1]}-${String(m[2]).padStart(2, '0')}`;
 }
 
-/**
- * 行の全列をSHA-1でハッシュ化（前月比較用）
- */
+/** 行の全列を SHA-1 でハッシュ化（前月比較用） */
 async function computeRowHash(row) {
   const text = [
     row.brand, row.category, row.agency, row.media,
@@ -36,11 +49,17 @@ async function computeRowHash(row) {
     .map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** 月を±nシフト（年跨ぎ対応） */
+function shiftMonth(ym, delta) {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// ── データ操作（API 経由） ───────────────────────────────────
+
 /**
  * ファイル1件を保存（同名上書き）
- * @param {string} filename
- * @param {string} folderName
- * @param {Array} rows
  * @returns {Promise<{id: string, month: string, row_count: number}>}
  */
 async function saveFileToDb(filename, folderName, rows) {
@@ -48,24 +67,13 @@ async function saveFileToDb(filename, folderName, rows) {
   if (!month) throw new Error(`ファイル名から月を抽出できません: ${filename}`);
 
   // 既存fileを削除（on delete cascade でrowsも一緒に消える）
-  const { error: delErr } = await supabaseClient
-    .from('files')
-    .delete()
-    .eq('filename', filename);
-  if (delErr) throw delErr;
+  await apiFetch(`/api/files?filename=${encodeURIComponent(filename)}`, { method: 'DELETE' });
 
-  // fileレコード挿入
-  const { data: fileData, error: fileErr } = await supabaseClient
-    .from('files')
-    .insert({
-      filename,
-      month,
-      folder_name: folderName,
-      row_count: rows.length
-    })
-    .select()
-    .single();
-  if (fileErr) throw fileErr;
+  // fileレコード挿入（id を受け取る）
+  const fileData = await apiFetch('/api/files', {
+    method: 'POST',
+    body: { filename, month, folder_name: folderName, row_count: rows.length }
+  });
 
   // rowsレコードを準備
   const rowRecords = await Promise.all(rows.map(async (r, idx) => ({
@@ -79,16 +87,13 @@ async function saveFileToDb(filename, folderName, rows) {
     amount: Number(r.amount) || 0,
     row_index: idx,
     row_hash: await computeRowHash(r),
-    // _colors は列インデックスで参照する配列。未設定時も配列で統一する（buildSheet の r._colors[ci] と型を揃える）
     colors: r._colors || []
   })));
 
-  // 1000件ずつバッチ挿入（Supabaseの上限対策）
+  // 1000件ずつバッチ挿入
   const BATCH = 1000;
   for (let i = 0; i < rowRecords.length; i += BATCH) {
-    const batch = rowRecords.slice(i, i + BATCH);
-    const { error: rowErr } = await supabaseClient.from('rows').insert(batch);
-    if (rowErr) throw rowErr;
+    await apiFetch('/api/rows', { method: 'POST', body: rowRecords.slice(i, i + BATCH) });
   }
 
   return { id: fileData.id, month, row_count: rows.length };
@@ -96,81 +101,39 @@ async function saveFileToDb(filename, folderName, rows) {
 
 /**
  * 保存済みの月一覧を取得（ファイル数・行数集計付き・新しい順）
- * @returns {Promise<Array<{month: string, file_count: number, total_rows: number}>>}
  */
 async function getSavedMonths() {
-  const { data, error } = await supabaseClient
-    .from('files')
-    .select('month, row_count');
-  if (error) throw error;
-
+  const data = await apiFetch('/api/files?summary=1');
   const grouped = {};
-  for (const f of data) {
+  for (const f of (data || [])) {
     if (!grouped[f.month]) grouped[f.month] = { file_count: 0, total_rows: 0 };
     grouped[f.month].file_count++;
     grouped[f.month].total_rows += (f.row_count || 0);
   }
-
   return Object.entries(grouped)
     .map(([month, stat]) => ({ month, ...stat }))
     .sort((a, b) => b.month.localeCompare(a.month));
 }
 
 /**
- * 月を±nシフト（年跨ぎ対応）
- */
-function shiftMonth(ym, delta) {
-  const [y, m] = ym.split('-').map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-/**
  * 前月の全行データを取得（差分ハイライト＋ツールチップ用）
- * @param {string} currentMonth - "2026-05"形式
- * @returns {Promise<{prevMonth: string, rows: Array}>}
  */
 async function getPrevMonthRows(currentMonth) {
   const prevMonth = shiftMonth(currentMonth, -1);
-  const { data: files, error: fErr } = await supabaseClient
-    .from('files')
-    .select('id')
-    .eq('month', prevMonth);
-  if (fErr) throw fErr;
-  if (files.length === 0) return { prevMonth, rows: [] };
-
-  const fileIds = files.map(f => f.id);
-  const { data: rows, error: rErr } = await supabaseClient
-    .from('rows')
-    .select('*')
-    .in('file_id', fileIds);
-  if (rErr) throw rErr;
-
-  return { prevMonth, rows };
+  const files = await apiFetch(`/api/files?month=${encodeURIComponent(prevMonth)}`);
+  if (!files || files.length === 0) return { prevMonth, rows: [] };
+  const fileIds = files.map(f => f.id).join(',');
+  const rows = await apiFetch(`/api/rows?fileIds=${encodeURIComponent(fileIds)}`);
+  return { prevMonth, rows: rows || [] };
 }
 
 /**
  * 指定月のファイル＋行データを全取得
- * @param {string} month - "2026-04" 形式
- * @returns {Promise<{files: Array, rows: Array}>}
  */
 async function loadMonthData(month) {
-  const { data: files, error: fErr } = await supabaseClient
-    .from('files')
-    .select('*')
-    .eq('month', month)
-    .order('uploaded_at');
-  if (fErr) throw fErr;
-
-  if (files.length === 0) return { files: [], rows: [] };
-
-  const fileIds = files.map(f => f.id);
-  const { data: rows, error: rErr } = await supabaseClient
-    .from('rows')
-    .select('*')
-    .in('file_id', fileIds)
-    .order('row_index');
-  if (rErr) throw rErr;
-
-  return { files, rows };
+  const files = await apiFetch(`/api/files?month=${encodeURIComponent(month)}`);
+  if (!files || files.length === 0) return { files: [], rows: [] };
+  const fileIds = files.map(f => f.id).join(',');
+  const rows = await apiFetch(`/api/rows?fileIds=${encodeURIComponent(fileIds)}&order=row_index`);
+  return { files, rows: rows || [] };
 }
