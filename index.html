@@ -12,9 +12,15 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <!-- JSZip (ヘッダー固定用XMLパッチに使用) -->
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<!-- Supabase JS SDK -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="stylesheet" href="css/style.css?v=202604230001">
+<script>
+  // 認証ゲート: 未ログインなら LINE ログインへ即リダイレクト
+  (function () {
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) location.replace('/api/auth/line/login'); })
+      .catch(function () { /* ネットワーク失敗時は操作時の API 401 で再判定 */ });
+  })();
+</script>
 <script>
   // iframe内で開かれた場合、HUBのトップバーと重複するヘッダを非表示にする
   if (window.self !== window.top) {
