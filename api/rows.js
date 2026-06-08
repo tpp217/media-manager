@@ -1,10 +1,20 @@
 // 行データ（rows）API。認証必須。file_id 群での取得とバッチ挿入のみ。
 import { sbFetch, requireAuth } from './_lib/util.js';
+import { evaluateAuth, sendBlock } from './_lib/auth-gate.js';
 
 const TABLE = 'rows';
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 export default async function handler(req, res) {
+  // 認証ゲート（workspace-hub JWT を JWKS 検証 / 既定は監視のみ・ブロックしない）。
+  // AUTH_ENFORCE=on のときだけブロック。既存の LINE SSO Cookie 認証（requireAuth）とは併存。
+  const auth = await evaluateAuth({
+    authHeader: req.headers.authorization,
+    method: req.method,
+    path: '/api/rows',
+  });
+  if (!auth.allowed) return sendBlock(res, auth);
+
   if (!requireAuth(req, res)) return;
   try {
     if (req.method === 'GET') {

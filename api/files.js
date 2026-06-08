@@ -1,9 +1,19 @@
 // 媒体ファイル（files）API。認証必須。月・ファイル名の限定操作のみ。
 import { sbFetch, eq, requireAuth } from './_lib/util.js';
+import { evaluateAuth, sendBlock } from './_lib/auth-gate.js';
 
 const TABLE = 'files';
 
 export default async function handler(req, res) {
+  // 認証ゲート（workspace-hub JWT を JWKS 検証 / 既定は監視のみ・ブロックしない）。
+  // AUTH_ENFORCE=on のときだけブロック。既存の LINE SSO Cookie 認証（requireAuth）とは併存。
+  const auth = await evaluateAuth({
+    authHeader: req.headers.authorization,
+    method: req.method,
+    path: '/api/files',
+  });
+  if (!auth.allowed) return sendBlock(res, auth);
+
   if (!requireAuth(req, res)) return;
   try {
     if (req.method === 'GET') {
