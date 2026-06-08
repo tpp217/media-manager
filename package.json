@@ -1,5 +1,8 @@
 {
   "private": true,
   "type": "module",
-  "description": "CLOSING AUTO — 静的サイト + Vercel Functions（依存なし・グローバル fetch のみ使用）"
+  "description": "media-manager — 静的サイト + Vercel Functions（LINE SSO + workspace-hub JWT 認証ゲート）",
+  "dependencies": {
+    "jose": "^5.10.0"
+  }
 }
