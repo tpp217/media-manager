@@ -25,9 +25,17 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 const DEFAULT_JWKS_URL = 'https://auth.utinc.dev/.well-known/jwks.json';
+// 既定の issuer。workspace-hub が発行する JWT の iss クレーム（固定値）。
+// 署名検証に加え iss を照合することで、別発行元のトークンによるなりすましを二重防御する。
+const DEFAULT_ISSUER = 'https://auth.utinc.dev';
 // 既定のシステムキー。workspace-hub SYSTEM_CATALOG のキー（media-manager 系統 = "media"）。
 // ※ system_access.system_key と一致している必要があり、enforce 前に要確認。
 const DEFAULT_SYSTEM_KEY = 'media';
+
+/** 期待する JWT 発行元（iss）。既定は workspace-hub の固定値 */
+function expectedIssuer() {
+  return process.env.AUTH_EXPECTED_ISSUER || DEFAULT_ISSUER;
+}
 
 /** enforce が有効か（"on" のときだけ true） */
 export function isEnforcing() {
@@ -63,7 +71,7 @@ function extractBearer(authHeader) {
  */
 async function verifyToken(token) {
   try {
-    const { payload } = await jwtVerify(token, getJWKS());
+    const { payload } = await jwtVerify(token, getJWKS(), { issuer: expectedIssuer() });
     return {
       ok: true,
       claims: {
