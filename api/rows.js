@@ -10,6 +10,7 @@ export default async function handler(req, res) {
   // AUTH_ENFORCE=on のときだけブロック。既存の LINE SSO Cookie 認証（requireAuth）とは併存。
   const auth = await evaluateAuth({
     authHeader: req.headers.authorization,
+    cookieHeader: req.headers.cookie,
     method: req.method,
     path: '/api/rows',
   });
