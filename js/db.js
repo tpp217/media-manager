@@ -17,7 +17,7 @@ async function apiFetch(path, { method = 'GET', body } = {}) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) {
-    window.location.href = '/api/auth/line/login';
+    window.location.href = '/api/auth/login';
     throw new Error('未認証のためログインへリダイレクトします');
   }
   if (!res.ok) {
