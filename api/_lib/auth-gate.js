@@ -23,6 +23,7 @@
  *                       一致している必要がある。enforce を on にする前に必ず要確認。
  */
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { isStandalone, standaloneTenantId } from './app-mode.js';
 
 const DEFAULT_JWKS_URL = 'https://auth.utinc.dev/.well-known/jwks.json';
 // 既定の issuer。workspace-hub が発行する JWT の iss クレーム（固定値）。
@@ -121,6 +122,14 @@ export async function verifyToken(token) {
  *   - allowed:false → 呼び出し側で status/body を返してブロック（enforce 時のみ発生）
  */
 export async function evaluateAuth({ authHeader, cookieHeader, method = '', path = '' } = {}) {
+  // 単体版（STANDALONE）: wh JWT は存在しないため監視/enforce ゲートを無効化し常に通す。
+  // 認可は単体版自前の認証（要実装）＋ STANDALONE_TENANT_ID 固定スコープに委ねる。
+  // これにより AUTH_ENFORCE=on を併用しても単体版の自前 API が 401 にならない。
+  // プラットフォーム版（既定・STANDALONE 未設定）はこの分岐に入らず従来どおり。
+  if (isStandalone()) {
+    return { allowed: true };
+  }
+
   const enforce = isEnforcing();
   // ヘッダ優先・無ければ SSO ログイン済みブラウザの wh_token cookie（フロント変更不要で認証が通る）。
   const token = extractBearer(authHeader) ?? extractWhTokenCookie(cookieHeader);
@@ -190,6 +199,16 @@ export function sendBlock(res, evalResult) {
  *   - ok:false → 呼び出し側は fail-closed（テナント未解決のデータ要求は拒否）
  */
 export async function resolveTenant({ authHeader, cookieHeader } = {}) {
+  // 単体版（STANDALONE）: 単一顧客＝1 テナント。wh JWT が無いため tenant_id claim は
+  // 取れない。代わりに env STANDALONE_TENANT_ID の固定値をテナントスコープに使う。
+  // 未設定なら fail-closed（テナント未解決のデータ要求は拒否＝漏洩防止）。
+  // プラットフォーム版（既定・STANDALONE 未設定）はこの分岐に入らず従来どおり JWT を読む。
+  if (isStandalone()) {
+    const tid = standaloneTenantId();
+    if (!tid) return { ok: false, reason: 'no_standalone_tenant_id' };
+    return { ok: true, tenantId: tid, claims: { tenant_id: tid, standalone: true } };
+  }
+
   const token = extractBearer(authHeader) ?? extractWhTokenCookie(cookieHeader);
   if (!token) return { ok: false, reason: 'no_token' };
 

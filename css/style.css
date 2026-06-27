@@ -220,12 +220,42 @@ a:hover { color: var(--blue-2); }
 
 .header-right {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+/* 認証アイコン（再ログイン／ログアウト・アイコンのみ）。todo AuthIcons と同型。 */
+.auth-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.auth-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border-c);
+  color: var(--text-3);
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
+}
+.auth-icon-btn:hover {
+  color: var(--text);
+  border-color: var(--text-3);
+}
+/* 時計＋日付は従来どおり縦積み（右寄せ） */
+.clock-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+/* iframe 埋め込み時はヘッダ自体が非表示（.is-embedded .hud-header）なので追加対応は不要 */
 .clock {
   font-size: 12px;
   color: var(--text);
