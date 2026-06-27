@@ -170,3 +170,35 @@ export async function evaluateAuth({ authHeader, cookieHeader, method = '', path
 export function sendBlock(res, evalResult) {
   res.status(evalResult.status || 401).json(evalResult.body || { error: 'unauthorized' });
 }
+
+/**
+ * 呼び出し元のテナント ID を解決する（データ分離＝テナントスコープ用）。
+ *
+ * ── enforce フラグとは独立に常に動く ──
+ *   evaluateAuth（監視/enforce ゲート）はログインの可否を制御するが、こちらは
+ *   「業務データをどのテナントに絞るか」を決める別の関心事。AUTH_ENFORCE が off でも
+ *   テナント分離は常に必要なので、ここでは enforce 判定を行わず、wh JWT の tenant_id を読む。
+ *
+ * トークンは Authorization: Bearer を優先し、無ければ SSO ログイン済みブラウザの
+ * wh_token cookie を使う（フロント変更不要）。検証に通ったトークンの tenant_id のみ採用する。
+ *
+ * @param {object} args
+ * @param {string} [args.authHeader]   Authorization ヘッダ値
+ * @param {string} [args.cookieHeader] Cookie ヘッダ値
+ * @returns {Promise<{ ok:true, tenantId:string, claims:object } | { ok:false, reason:string }>}
+ *   - ok:true  → tenantId（空でない文字列）を業務クエリのスコープに使う
+ *   - ok:false → 呼び出し側は fail-closed（テナント未解決のデータ要求は拒否）
+ */
+export async function resolveTenant({ authHeader, cookieHeader } = {}) {
+  const token = extractBearer(authHeader) ?? extractWhTokenCookie(cookieHeader);
+  if (!token) return { ok: false, reason: 'no_token' };
+
+  const verified = await verifyToken(token);
+  if (!verified.ok) return { ok: false, reason: verified.reason || 'verify_failed' };
+
+  const tenantId = verified.claims.tenant_id;
+  if (typeof tenantId !== 'string' || tenantId.length === 0) {
+    return { ok: false, reason: 'no_tenant_claim' };
+  }
+  return { ok: true, tenantId, claims: verified.claims };
+}
