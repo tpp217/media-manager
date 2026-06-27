@@ -40,9 +40,9 @@ media-manager/
 
 | 観点 | プラットフォーム版（既定・`STANDALONE` 未設定） | 単体版（`STANDALONE=true`） |
 |---|---|---|
-| ログイン | workspace-hub の SSO（LINE 統一・既存） | アプリ自前ログイン（SSO へ飛ばさない） |
+| ログイン | workspace-hub の SSO（LINE 統一・既存） | アプリ自前ログイン（`/login`・Supabase Auth の email/password） |
 | テナント | wh JWT の `tenant_id` claim | `STANDALONE_TENANT_ID` に固定（単一顧客＝1 テナント） |
-| 認証ゲート | 監視/enforce（`AUTH_ENFORCE`） | スキップ（wh JWT が無いため） |
+| 認証ゲート | 監視/enforce（`AUTH_ENFORCE`） | 自前 `media_session` を必須化（無ければ 401→`/login`） |
 | 媒体データ | 各テナントの自前データ | 単一顧客＝自前で完結（専用の登録 UI は不要） |
 
 ### ★最重要：完全後方互換
@@ -51,11 +51,26 @@ media-manager/
 ### 関連 env
 - `STANDALONE` … 単体版にするフラグ。
 - `STANDALONE_TENANT_ID` … 単体版で全データを紐づける固定テナント ID（`STANDALONE=true` のとき必須）。
+- `SUPABASE_ANON_KEY`（無ければ `SUPABASE_PUBLISHABLE_KEY`）… 単体版ログインで使う公開可キー。`/login` がブラウザで `signInWithPassword` し、サーバーは `/auth/v1/user` で token を検証する。
 
-### ⚠️ 単体版ログインは未整備（要実装）
-現状このアプリの唯一のログイン経路は wh SSO（`api/auth/login` → `callback` が `media_session` を発行）です。**単体版で `media_session` を SSO 以外で発行する自前ログインはまだありません**。本対応で入れたのは「モードフラグ／ゲート・テナント固定の分岐／右上の認証アイコン／単体版では SSO へ飛ばさない」までで、実運用には別途、単体版の自前ログイン（例: ID/パスワードや顧客専用の発行経路）の実装が必要です。
+### 単体版ログインの仕組み（自前ローカルログイン）
+単体版は wh SSO を使わず、アプリ自前の `media_session` でアクセスを制御します。
+
+1. 未ログインで `/` を開くと `/login`（`login.html`）へ誘導。
+2. `/login` が `/api/auth/standalone-login`（GET）で公開設定（`SUPABASE_URL` ＋ anon キー）を取得し、supabase-js で email/password の `signInWithPassword` を実行。
+3. 取得した `access_token` を `/api/auth/standalone-login`（POST）へ送ると、サーバーが Supabase の `/auth/v1/user` で token を検証し、成功時に既存基盤（`issueSession`）で `media_session` cookie を発行。
+4. 以後、業務 API（`files` / `rows`）の認証ゲート（`evaluateAuth` の STANDALONE 分岐）が `media_session` を必須化（無ければ 401）。テナントは `STANDALONE_TENANT_ID` 固定。
+
+> パスワードはサーバーを通りません（本人確認は Supabase に委譲）。サーバーが扱うのは Supabase 発行の `access_token` のみで、anon / publishable キーは公開可キーです（service_role はクライアントに渡しません）。
+
+#### 初期ユーザーの作成
+単体版ユーザーは **Supabase ダッシュボード**で作成します（このアプリにユーザー登録 UI はありません）。
+対象 Supabase プロジェクトの **Authentication > Users > Add user** で email / password を登録すれば、その資格情報で `/login` からログインできます。
 
 実装の正本は `api/_lib/app-mode.js`（サーバー判定）／`api/app-mode.js`（クライアント取得用 JSON）です。
+
+### ★後方互換の根拠
+単体版の分岐はすべて `isStandalone()`（`STANDALONE` が ON のときだけ true）のガード下にあります。`STANDALONE` 未設定では `standalone-login` は **404**、`evaluateAuth` / `me` / `logout` の STANDALONE 分岐には入らず、wh SSO 経路（`api/auth/login` → `callback`）・wh JWT 検証は一切変わりません（additive な変更のみ）。
 
 ## 🖥️ 使い方
 
