@@ -19,11 +19,12 @@
   window.__MEDIA_STANDALONE__ = false;
 </script>
 <script>
-  // 認証ゲート: 未ログインなら（プラットフォーム版のみ）SSO ログインへ即リダイレクト。
-  // 単体版（STANDALONE）は SSO へ飛ばさない（自前ログイン未整備＝要実装のため）。
+  // 認証ゲート: 未ログインなら、モードに応じたログイン入口へ即リダイレクト。
+  //   プラットフォーム版 → /api/auth/login（wh SSO 入口）。
+  //   単体版（STANDALONE）→ /login（自前ローカルログイン）。
   // 併せて me の本文から identity（テナント名 / 氏名 / 所属部署）を読み、ヘッダに描画する。
   (function () {
-    // まずモードを判定（単体版では 401 でも SSO へ飛ばさない）。
+    // まずモードを判定（単体版は /login、プラットフォーム版は SSO へ誘導）。
     fetch('/api/app-mode', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (m) { window.__MEDIA_STANDALONE__ = !!(m && m.standalone); })
@@ -31,11 +32,11 @@
       .then(function () {
         // 再ログインアイコンの遷移先をモードで切替。
         //   プラットフォーム版 → /api/auth/login（wh SSO 入口・既定の href のまま）。
-        //   単体版          → /（自前ログイン未整備＝要実装。トップへ留める安全な遷移先）。
+        //   単体版          → /login（自前ローカルログイン）。
         function applyMode() {
           if (!window.__MEDIA_STANDALONE__) return; // 既定はプラットフォーム版＝変更なし
           var relogin = document.getElementById('authRelogin');
-          if (relogin) relogin.setAttribute('href', '/');
+          if (relogin) relogin.setAttribute('href', '/login');
         }
         if (document.readyState === 'loading') {
           document.addEventListener('DOMContentLoaded', applyMode);
@@ -46,8 +47,8 @@
       })
       .then(function (r) {
         if (!r.ok) {
-          // プラットフォーム版のみ SSO 入口へ。単体版は自前ログイン未整備のため留まる。
-          if (!window.__MEDIA_STANDALONE__) { location.replace('/api/auth/login'); }
+          // 未ログイン: 単体版は /login（自前ログイン）、プラットフォーム版は SSO 入口へ。
+          location.replace(window.__MEDIA_STANDALONE__ ? '/login' : '/api/auth/login');
           return null;
         }
         return r.json().catch(function () { return null; });
@@ -118,8 +119,8 @@
     <!-- ログイン中の identity（テナント名／氏名／所属部署）。me() の本文から描画される。 -->
     <span id="header-identity" style="display:flex;align-items:center;gap:6px;font-size:0.72rem;opacity:0.85;"></span>
     <!-- 認証アイコン（全システム共通の雛形・アイコンのみ）。遷移先はモードで JS が切替。
-         再ログイン（↻）: プラットフォーム版→/api/auth/login（wh SSO）・単体版→/（自前ログイン未整備）。
-         ログアウト（⇥）: 両モードとも /api/auth/logout（セッション破棄→トップ）。 -->
+         再ログイン（↻）: プラットフォーム版→/api/auth/login（wh SSO）・単体版→/login（自前ログイン）。
+         ログアウト（⇥）: 両モードとも /api/auth/logout（セッション破棄→入口へ）。 -->
     <div class="auth-icons" id="authIcons">
       <a class="auth-icon-btn" id="authRelogin" href="/api/auth/login" title="再ログイン" aria-label="再ログイン">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

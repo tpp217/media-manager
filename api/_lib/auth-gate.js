@@ -24,6 +24,7 @@
  */
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { isStandalone, standaloneTenantId } from './app-mode.js';
+import { verifySession, SESSION_COOKIE } from './util.js';
 
 const DEFAULT_JWKS_URL = 'https://auth.utinc.dev/.well-known/jwks.json';
 // 既定の issuer。workspace-hub が発行する JWT の iss クレーム（固定値）。
@@ -78,6 +79,20 @@ function extractBearer(authHeader) {
   return m ? m[1].trim() : null;
 }
 
+/** Cookie ヘッダ文字列から任意の cookie 値を取り出す（無ければ null）。URL デコード込み。 */
+function extractCookie(cookieHeader, name) {
+  if (!cookieHeader || typeof cookieHeader !== 'string') return null;
+  for (const part of cookieHeader.split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() === name) {
+      const v = part.slice(i + 1).trim();
+      if (v.length > 0) { try { return decodeURIComponent(v); } catch { return v; } }
+    }
+  }
+  return null;
+}
+
 /**
  * JWT を検証してクレームを取り出す。
  * 成功: { ok:true, claims:{ tenant_id, level, capabilities, systems, sub } }
@@ -122,11 +137,20 @@ export async function verifyToken(token) {
  *   - allowed:false → 呼び出し側で status/body を返してブロック（enforce 時のみ発生）
  */
 export async function evaluateAuth({ authHeader, cookieHeader, method = '', path = '' } = {}) {
-  // 単体版（STANDALONE）: wh JWT は存在しないため監視/enforce ゲートを無効化し常に通す。
-  // 認可は単体版自前の認証（要実装）＋ STANDALONE_TENANT_ID 固定スコープに委ねる。
-  // これにより AUTH_ENFORCE=on を併用しても単体版の自前 API が 401 にならない。
-  // プラットフォーム版（既定・STANDALONE 未設定）はこの分岐に入らず従来どおり。
+  // 単体版（STANDALONE）: wh SSO/JWT が存在しない運用のため、wh JWT 監視/enforce ゲートは使わず、
+  // 自前のローカルログインで発行した media_session（HMAC cookie）を必須にしてアクセスを塞ぐ。
+  //   - media_session が有効 → 通す（allowed:true）。
+  //   - 無い / 失効 / 改竄 → 401 でブロック（フロントは 401 を見て /login へ誘導）。
+  // 認可（本人確認）はローカルログイン（/api/auth/standalone-login）、テナント分離は
+  // resolveTenant の固定テナント（STANDALONE_TENANT_ID）に委ねる。
+  // ※プラットフォーム版（STANDALONE 未設定）はこの分岐に入らず従来どおり＝挙動不変。
   if (isStandalone()) {
+    const tag = `[auth-gate][STANDALONE] ${method} ${path}`;
+    const session = verifySession(extractCookie(cookieHeader, SESSION_COOKIE));
+    if (!session) {
+      console.warn(`${tag} no_local_session`);
+      return { allowed: false, status: 401, body: { error: 'ログインが必要です' } };
+    }
     return { allowed: true };
   }
 
