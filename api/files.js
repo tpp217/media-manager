@@ -1,6 +1,7 @@
 // 媒体ファイル（files）API。認証必須。月・ファイル名の限定操作のみ。
+// 全クエリを呼び出し元 tenant_id にスコープする（クロステナント漏洩防止・主たる防御＝アプリ層）。
 import { sbFetch, eq, requireAuth } from './_lib/util.js';
-import { evaluateAuth, sendBlock } from './_lib/auth-gate.js';
+import { evaluateAuth, sendBlock, resolveTenant } from './_lib/auth-gate.js';
 
 const TABLE = 'files';
 
@@ -16,15 +17,28 @@ export default async function handler(req, res) {
   if (!auth.allowed) return sendBlock(res, auth);
 
   if (!requireAuth(req, res)) return;
+
+  // テナント解決（データ分離）。enforce フラグとは独立に常に必須。
+  // 未解決（トークン無し / 検証失敗 / tenant_id クレーム欠如）は fail-closed。
+  const t = await resolveTenant({
+    authHeader: req.headers.authorization,
+    cookieHeader: req.headers.cookie,
+  });
+  if (!t.ok) {
+    console.warn(`[files] tenant_unresolved reason=${t.reason}`);
+    return res.status(403).json({ error: 'テナントを特定できませんでした（再ログインしてください）' });
+  }
+  const tid = t.tenantId;
+
   try {
     if (req.method === 'GET') {
       const { month, summary } = req.query;
       if (summary) {
-        const rows = await sbFetch(`${TABLE}?select=month,row_count`);
+        const rows = await sbFetch(`${TABLE}?tenant_id=${eq(tid)}&select=month,row_count`);
         return res.status(200).json(rows || []);
       }
       if (month) {
-        const rows = await sbFetch(`${TABLE}?month=${eq(month)}&select=*&order=uploaded_at`);
+        const rows = await sbFetch(`${TABLE}?tenant_id=${eq(tid)}&month=${eq(month)}&select=*&order=uploaded_at`);
         return res.status(200).json(rows || []);
       }
       return res.status(400).json({ error: 'month または summary が必要です' });
@@ -33,10 +47,11 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const { filename, month, folder_name, row_count } = req.body || {};
       if (!filename || !month) return res.status(400).json({ error: 'filename / month が必要です' });
+      // tenant_id はサーバーで強制（クライアント値は信用しない）。
       const inserted = await sbFetch(TABLE, {
         method: 'POST',
         headers: { Prefer: 'return=representation' },
-        body: JSON.stringify({ filename, month, folder_name: folder_name ?? '', row_count: row_count ?? 0 }),
+        body: JSON.stringify({ tenant_id: tid, filename, month, folder_name: folder_name ?? '', row_count: row_count ?? 0 }),
       });
       return res.status(200).json((inserted && inserted[0]) || null);
     }
@@ -44,8 +59,9 @@ export default async function handler(req, res) {
     if (req.method === 'DELETE') {
       const { filename } = req.query;
       if (!filename) return res.status(400).json({ error: 'filename が必要です' });
+      // tenant スコープ削除（自テナントの file のみ削除可）。
       // files 削除で rows は on delete cascade により連動削除
-      await sbFetch(`${TABLE}?filename=${eq(filename)}`, { method: 'DELETE' });
+      await sbFetch(`${TABLE}?tenant_id=${eq(tid)}&filename=${eq(filename)}`, { method: 'DELETE' });
       return res.status(200).json({ ok: true });
     }
 
