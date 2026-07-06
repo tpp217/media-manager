@@ -25,11 +25,26 @@ async function apiFetch(path, { method = 'GET', body } = {}) {
     let attempted = false;
     try { attempted = !!sessionStorage.getItem('wh_sso_attempt'); } catch {}
     if (attempted) {
-      throw new Error('認証に失敗しました（このアカウントに媒体管理へのアクセス権が無い可能性があります）。ログインし直しても解消しない場合は管理者にご確認ください。');
+      // SSO 再ログインを試みても 401 のまま（未ログイン / 媒体管理の契約が無い等）。
+      // 行き止まりにせず、案内を出してランチャーへ誘導する（AUTH_ENFORCE 点灯対応）。
+      showAuthNotice('ログインが必要です。ランチャーへ移動します…');
+      setTimeout(() => { window.location.href = 'https://auth.utinc.dev/launcher'; }, 1500);
+      throw new Error('ログインが必要です。ランチャーへ移動します。');
     }
     try { sessionStorage.setItem('wh_sso_attempt', '1'); } catch {}
     window.location.href = '/api/auth/login';
     throw new Error('未認証のためログインへリダイレクトします');
+  }
+  if (res.status === 403) {
+    // 権限不足（capabilities 不足・システム未契約等）。ランチャーへは飛ばさず
+    // （無限リダイレクト防止）、サーバーが返す日本語エラーをそのまま画面に表示する。
+    let msg = 'この操作を行う権限がありません。';
+    try {
+      const data = await res.json();
+      if (data && data.error) msg = data.error;
+    } catch {}
+    showAuthNotice(msg);
+    throw new Error(msg);
   }
   if (!res.ok) {
     const t = await res.text().catch(() => '');
@@ -39,6 +54,24 @@ async function apiFetch(path, { method = 'GET', body } = {}) {
   try { sessionStorage.removeItem('wh_sso_attempt'); } catch {}
   const t = await res.text();
   return t ? JSON.parse(t) : null;
+}
+
+// ── 認証・権限の画面通知 ─────────────────────────────────────
+// 401/403 時に画面上部へ短い案内バナーを出す（alert より邪魔にならない固定表示）。
+function showAuthNotice(message) {
+  try {
+    let el = document.getElementById('auth-notice-banner');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'auth-notice-banner';
+      el.style.cssText =
+        'position:fixed;top:0;left:0;right:0;z-index:99999;padding:10px 16px;' +
+        'background:#111;color:#fff;font-size:14px;text-align:center;' +
+        'border-bottom:1px solid #555;';
+      document.body.appendChild(el);
+    }
+    el.textContent = message;
+  } catch { /* 通知が出せなくても本処理は止めない */ }
 }
 
 // ── クライアント側ヘルパー（DB非依存・従来どおり） ──────────
