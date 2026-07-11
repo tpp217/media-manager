@@ -167,10 +167,14 @@ export async function verifyToken(token) {
         //   is_demo:     デモ/テスト用テナント（auth_core.tenants.is_demo）なら true。
         //                フロントのモック/サンプル表示の出し分けヒント（認可境界ではない）。
         //   name:        本人氏名 / tenant_name: テナント名 / department: 主所属の部署名。
+        //   department_id: 選択部署の識別子（UUID）または "home"（部署未選択＝ホーム）。
+        //                  「部署 既定フィルタ型」で自部署スコープの初期表示に使う識別子。
+        //                  ※ department は表示用の名称、department_id は既定フィルタ用の識別子。
         is_demo:      typeof payload.is_demo === 'boolean' ? payload.is_demo : false,
         name:         typeof payload.name === 'string' ? payload.name : null,
         tenant_name:  typeof payload.tenant_name === 'string' ? payload.tenant_name : null,
         department:   typeof payload.department === 'string' ? payload.department : null,
+        department_id: typeof payload.department_id === 'string' ? payload.department_id : null,
       },
     };
   } catch (e) {
