@@ -30,12 +30,13 @@ export default async function handler(req, res) {
       is_demo: false,
       tenant_name: '',
       department: '',
+      department_id: '', // 単体版は wh JWT を持たないため部署識別子は空（フロントが常に読めるよう明示）。
     });
   }
 
   // workspace-hub JWT（wh_token cookie）があれば検証して表示用 claim を取り出す。
   // 失敗・未提供は identity 空のまま続行（自前セッションが正なら 200）。
-  let identity = { is_demo: false, name: '', tenant_name: '', department: '' };
+  let identity = { is_demo: false, name: '', tenant_name: '', department: '', department_id: '' };
   const whToken = cookies['wh_token'];
   if (whToken) {
     const verified = await verifyToken(whToken);
@@ -46,6 +47,7 @@ export default async function handler(req, res) {
         name: c.name || '',
         tenant_name: c.tenant_name || '',
         department: c.department || '',
+        department_id: c.department_id || '',
       };
     }
   }
@@ -63,5 +65,8 @@ export default async function handler(req, res) {
     is_demo: identity.is_demo,
     tenant_name: identity.tenant_name,
     department: identity.department,
+    // 部署 既定フィルタ用の識別子（UUID or "home"）。表示名 department とは別に additive で返す。
+    // 現状 files/rows に部署次元が無いため既定フィルタ自体は未実装。フロントが将来使えるよう受け渡しのみ確立。
+    department_id: identity.department_id,
   });
 }
