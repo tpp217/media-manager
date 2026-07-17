@@ -78,10 +78,10 @@
    data-color-scheme="default" | "heroui"（既定は default）
 ═══════════════════════════════════════════ */
 :root[data-color-scheme="heroui"] {
-  --blue:        #006FEE;
-  --blue-2:      #005BC4;
-  --blue-soft:   #E6F1FF;
-  --blue-border: #B8D9FF;
+  --blue:        #6D4EF5;
+  --blue-2:      #5A3BE0;
+  --blue-soft:   #EFEAFE;
+  --blue-border: #D5C8FC;
   --purple:      #7828C8;
   --purple-soft: #F2E8FC;
 }
@@ -121,10 +121,10 @@
   --shadow-lg:  0 8px 20px rgba(0, 0, 0, 0.32), 0 16px 40px rgba(0, 0, 0, 0.44);
 }
 :root[data-theme="dark"][data-color-scheme="heroui"] {
-  --blue:        #3F97FF;
-  --blue-2:      #66ADFF;
-  --blue-soft:   rgba(0, 111, 238, 0.2);
-  --blue-border: rgba(63, 151, 255, 0.4);
+  --blue:        #9385FF;
+  --blue-2:      #AA9EFF;
+  --blue-soft:   rgba(147, 133, 255, 0.2);
+  --blue-border: rgba(147, 133, 255, 0.42);
   --purple:      #9353D3;
   --purple-soft: rgba(147, 83, 211, 0.18);
 }
