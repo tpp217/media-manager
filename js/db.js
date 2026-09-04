@@ -9,6 +9,18 @@
 'use strict';
 
 // ── API 呼び出し共通 ─────────────────────────────────────────
+
+// 401 → SSO 再ログインの多重リダイレクト防止（このページ読み込み内で1回だけ）。
+// 並列 fetch が同時に 401 になると、1本目が印を付けて再ログインへ向かう最中に
+// 2本目が「試行済み」と誤判定してランチャーへ飛ばす競合があった（時々 workspace に
+// 戻される実害・closing-automation #31 と同件）。最初の1本だけがリダイレクトを担当する。
+let _authRedirecting = false;
+
+// 「再認証を試みた」印を有効とみなす時間。印はセッション内に残り続けるため、
+// これより古い印は無効（＝wh_token の次の15分失効では改めて無音再ログインを試みる）。
+// 本物の 401 ループ（未契約等）は数秒内に再発するため、この窓でも従来どおり止まる。
+const SSO_ATTEMPT_WINDOW_MS = 60 * 1000;
+
 async function apiFetch(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
     method,
@@ -18,20 +30,26 @@ async function apiFetch(path, { method = 'GET', body } = {}) {
   });
   if (res.status === 401) {
     // 未認証（wh_token 失効・未ログイン等）→ SSO 再ログインへ誘導。
-    // ループ防止: 直近で一度再認証を試みていれば再リダイレクトしない。
+    // ループ防止: 直近（SSO_ATTEMPT_WINDOW_MS 内）で一度再認証を試みていれば再リダイレクトしない。
     // （media 未契約の operator 等は callback が cookie を張れず 401 が続くため、
     //   ガード無しだと 401→login→callback→401… の無限リダイレクトになる）。
     // 認証済みの応答が一度でも得られた時点で印を解除する（下記）。
-    let attempted = false;
-    try { attempted = !!sessionStorage.getItem('wh_sso_attempt'); } catch {}
+    if (_authRedirecting) {
+      throw new Error('再ログイン処理中です');
+    }
+    let attemptedAt = 0;
+    try { attemptedAt = Number(sessionStorage.getItem('wh_sso_attempt')) || 0; } catch {}
+    const attempted = attemptedAt > 0 && Date.now() - attemptedAt < SSO_ATTEMPT_WINDOW_MS;
     if (attempted) {
       // SSO 再ログインを試みても 401 のまま（未ログイン / 媒体管理の契約が無い等）。
       // 行き止まりにせず、案内を出してランチャーへ誘導する（AUTH_ENFORCE 点灯対応）。
+      _authRedirecting = true;
       showAuthNotice('ログインが必要です。ランチャーへ移動します…');
       setTimeout(() => { window.location.href = 'https://auth.utinc.dev/launcher'; }, 1500);
       throw new Error('ログインが必要です。ランチャーへ移動します。');
     }
-    try { sessionStorage.setItem('wh_sso_attempt', '1'); } catch {}
+    try { sessionStorage.setItem('wh_sso_attempt', String(Date.now())); } catch {}
+    _authRedirecting = true;
     window.location.href = '/api/auth/login';
     throw new Error('未認証のためログインへリダイレクトします');
   }
