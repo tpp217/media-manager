@@ -832,15 +832,16 @@ function renderTable() {
 
   els.tableBody.innerHTML = slice.map((r, i) => {
     const cls = r._isRemoved ? 'row-removed' : (r._isNew ? 'row-new' : '');
+    const cols = r._colors || [];
     return `
     <tr${cls ? ` class="${cls}"` : ''} data-idx="${i}">
-      <td>${escHtml(r.brand)}</td>
-      <td>${escHtml(r.category)}</td>
-      <td>${escHtml(r.agency)}</td>
-      <td>${escHtml(r.media)}</td>
-      <td>${escHtml(r.plan)}</td>
-      <td>${escHtml(r.note)}</td>
-      <td class="p-amount">${fmtYen(r.amount)}</td>
+      <td${cellFillAttr(cols[0])}>${escHtml(r.brand)}</td>
+      <td${cellFillAttr(cols[1])}>${escHtml(r.category)}</td>
+      <td${cellFillAttr(cols[2])}>${escHtml(r.agency)}</td>
+      <td${cellFillAttr(cols[3])}>${escHtml(r.media)}</td>
+      <td${cellFillAttr(cols[4])}>${escHtml(r.plan)}</td>
+      <td${cellFillAttr(cols[5])}>${escHtml(r.note)}</td>
+      <td class="p-amount"${cellFillAttr(cols[6])}>${fmtYen(r.amount)}</td>
     </tr>`;
   }).join('');
 
@@ -1017,17 +1018,20 @@ function showPreviewModal(type, agencies) {
           <th>媒体</th><th>プラン</th><th>備考</th><th>金額</th>
         </tr></thead>
         <tbody>
-          ${rows.map(r => `
+          ${rows.map(r => {
+            const cols = r._colors || [];
+            return `
             <tr>
-              <td>${escHtml(r.brand)}</td>
-              <td>${escHtml(r.category)}</td>
-              <td>${escHtml(r.agency)}</td>
-              <td>${escHtml(r.media)}</td>
-              <td>${escHtml(r.plan)}</td>
-              <td>${escHtml(r.note)}</td>
-              <td class="p-amount">${fmtYen(r.amount)}</td>
+              <td${cellFillAttr(cols[0])}>${escHtml(r.brand)}</td>
+              <td${cellFillAttr(cols[1])}>${escHtml(r.category)}</td>
+              <td${cellFillAttr(cols[2])}>${escHtml(r.agency)}</td>
+              <td${cellFillAttr(cols[3])}>${escHtml(r.media)}</td>
+              <td${cellFillAttr(cols[4])}>${escHtml(r.plan)}</td>
+              <td${cellFillAttr(cols[5])}>${escHtml(r.note)}</td>
+              <td class="p-amount"${cellFillAttr(cols[6])}>${fmtYen(r.amount)}</td>
             </tr>
-          `).join('')}
+          `;
+          }).join('')}
         </tbody>
       </table>
     `;
@@ -1315,6 +1319,20 @@ function escHtml(str) {
 function fmtYen(val) {
   const n = Number(val) || 0;
   return '¥' + n.toLocaleString('ja-JP');
+}
+
+/**
+ * 原本Excelのセル背景色(6桁RGB)をtd用のstyle属性文字列に変換
+ * 背景の明度から文字色を自動判定し、暗い塗りつぶしでも文字を読めるようにする
+ */
+function cellFillAttr(rgb) {
+  if (!rgb) return '';
+  const r = parseInt(rgb.slice(0, 2), 16);
+  const g = parseInt(rgb.slice(2, 4), 16);
+  const b = parseInt(rgb.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const textColor = luminance < 0.55 ? '#FFFFFF' : '#1A1A1A';
+  return ` style="background-color:#${rgb};color:${textColor};"`;
 }
 
 // 起動ログ
