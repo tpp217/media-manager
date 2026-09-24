@@ -10,6 +10,7 @@
 import { parseCookies, verifySession, SESSION_COOKIE } from '../_lib/util.js';
 import { verifyToken } from '../_lib/auth-gate.js';
 import { isStandalone } from '../_lib/app-mode.js';
+import { sessionMatchesStandaloneTenant } from '../_lib/standalone-access.js';
 
 export default async function handler(req, res) {
   const cookies = parseCookies(req);
@@ -20,7 +21,8 @@ export default async function handler(req, res) {
   //     フロントは standalone:true を見て /api/auth/login（SSO）ではなく /login（自前）へ誘導する。
   //   - 有効ならログイン済みとして 200。identity（テナント名/部署）は単体版では持たないため空。
   if (isStandalone()) {
-    if (!session) {
+    // stid（発行時テナント）が現在の STANDALONE_TENANT_ID と一致しないセッションは未ログイン扱い（auth-gate と同じ判定）。
+    if (!session || !sessionMatchesStandaloneTenant(session)) {
       return res.status(401).json({ authenticated: false, standalone: true });
     }
     return res.status(200).json({
