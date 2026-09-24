@@ -32,18 +32,17 @@ export default async function handler(req, res) {
       { headers: { Authorization: `Bearer ${secret}` } },
     );
     if (!rosterRes.ok) return res.status(502).json({ ok: false, error: `roster API ${rosterRes.status}` });
-    const roster = await rosterRes.json();
-    const members = Array.isArray(roster && roster.members) ? roster.members : [];
+    const roster = await rosterRes.json().catch(() => null);
+    // 形の崩れた応答を「名簿 0 人」と解釈すると全員を無効化してしまうため、何も触らず失敗させる。
+    if (!roster || !Array.isArray(roster.members)) {
+      return res.status(502).json({ ok: false, error: 'roster API の応答に members がありません' });
+    }
+    const members = roster.members;
+    const now = new Date().toISOString();
 
-    // --- service_role(REST) で同期。名簿から消えた人は active=false ---
-    await sbFetch(`member_directory?system_key=${eq(systemKey)}&tenant_id=${eq(tenantId)}`, {
-      method: 'PATCH',
-      headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ active: false }),
-    });
-
+    // --- service_role(REST) で同期。先に upsert し、その後で名簿から消えた人だけ active=false にする
+    //     （途中で失敗しても全員が無効化された状態を作らない）。sbFetch は非 2xx で throw する ---
     if (members.length) {
-      const now = new Date().toISOString();
       const rows = members.map((m) => ({
         system_key: systemKey,
         tenant_id: tenantId,
@@ -62,6 +61,15 @@ export default async function handler(req, res) {
         body: JSON.stringify(rows),
       });
     }
+
+    // 今回 upsert した行は synced_at=now。それ以外（名簿から消えた人）だけを無効化する。
+    // member_id の not.in 列挙だと大人数で URL 長を超えるため、synced_at で判定する。
+    const stale = encodeURIComponent(`(synced_at.is.null,synced_at.lt."${now}")`);
+    await sbFetch(`member_directory?system_key=${eq(systemKey)}&tenant_id=${eq(tenantId)}&active=is.true&or=${stale}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ active: false }),
+    });
 
     return res.status(200).json({ ok: true, count: members.length });
   } catch (e) {
