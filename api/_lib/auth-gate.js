@@ -28,6 +28,7 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { isStandalone, standaloneTenantId } from './app-mode.js';
 import { verifySession, SESSION_COOKIE } from './util.js';
+import { sessionMatchesStandaloneTenant } from './standalone-access.js';
 
 const DEFAULT_JWKS_URL = 'https://auth.utinc.dev/.well-known/jwks.json';
 // 既定の issuer。workspace-hub が発行する JWT の iss クレーム（固定値）。
@@ -208,6 +209,12 @@ export async function evaluateAuth({ authHeader, cookieHeader, method = '', path
     const session = verifySession(extractCookie(cookieHeader, SESSION_COOKIE));
     if (!session) {
       console.warn(`${tag} no_local_session`);
+      return { allowed: false, status: 401, body: { error: 'ログインが必要です' } };
+    }
+    // セッションに刻んだテナント（stid）が現在の STANDALONE_TENANT_ID と一致するか。
+    // 入室許可の判定導入前に発行されたセッションや、テナント変更前のセッションは再ログインさせる。
+    if (!sessionMatchesStandaloneTenant(session)) {
+      console.warn(`${tag} session_tenant_mismatch`);
       return { allowed: false, status: 401, body: { error: 'ログインが必要です' } };
     }
     return { allowed: true };
