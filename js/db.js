@@ -173,14 +173,13 @@ async function saveFileToDb(filename, folderName, rows) {
   const month = extractMonth(filename);
   if (!month) throw new Error(`ファイル名から月を抽出できません: ${filename}`);
 
-  // 既存fileを削除（on delete cascade でrowsも一緒に消える）
-  await apiFetch(`/api/files?filename=${encodeURIComponent(filename)}`, { method: 'DELETE' });
-
-  // fileレコード挿入（id を受け取る）
+  // 先に新しい file を作り、行を全部入れ終えてから同名の古い file を消す。
+  // （旧: 先に古い方を消していたため、途中で失敗すると前回のデータまで消えていた）
   const fileData = await apiFetch('/api/files', {
     method: 'POST',
     body: { filename, month, folder_name: folderName, row_count: rows.length }
   });
+  if (!fileData || !fileData.id) throw new Error(`ファイル登録に失敗しました: ${filename}`);
 
   // rowsレコードを準備
   const rowRecords = await Promise.all(rows.map(normalizeRow).map(async (r, idx) => ({
@@ -197,10 +196,25 @@ async function saveFileToDb(filename, folderName, rows) {
     colors: r._colors || []
   })));
 
-  // 1000件ずつバッチ挿入
+  // 1000件ずつバッチ挿入。失敗したら作りかけの新しい file を消して、古いデータを残す
   const BATCH = 1000;
-  for (let i = 0; i < rowRecords.length; i += BATCH) {
-    await apiFetch('/api/rows', { method: 'POST', body: rowRecords.slice(i, i + BATCH) });
+  try {
+    for (let i = 0; i < rowRecords.length; i += BATCH) {
+      await apiFetch('/api/rows', { method: 'POST', body: rowRecords.slice(i, i + BATCH) });
+    }
+  } catch (err) {
+    await apiFetch(`/api/files?id=${encodeURIComponent(fileData.id)}`, { method: 'DELETE' }).catch(() => {});
+    throw err;
+  }
+
+  // 新しい方が揃ったので、同名の古い file を削除（on delete cascade で rows も一緒に消える）
+  try {
+    await apiFetch(
+      `/api/files?filename=${encodeURIComponent(filename)}&exceptId=${encodeURIComponent(fileData.id)}`,
+      { method: 'DELETE' }
+    );
+  } catch (err) {
+    throw new Error(`新しいデータは保存しましたが、前回分の削除に失敗しました。もう一度アップロードしてください（${err.message}）`);
   }
 
   return { id: fileData.id, month, row_count: rows.length };

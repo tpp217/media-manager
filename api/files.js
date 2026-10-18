@@ -4,6 +4,7 @@ import { sbFetch, eq, requireAuth } from './_lib/util.js';
 import { evaluateAuth, sendBlock, resolveTenant } from './_lib/auth-gate.js';
 
 const TABLE = 'files';
+const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 export default async function handler(req, res) {
   // 認証ゲート（workspace-hub JWT を JWKS 検証 / 既定は監視のみ・ブロックしない）。
@@ -57,11 +58,20 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'DELETE') {
-      const { filename } = req.query;
-      if (!filename) return res.status(400).json({ error: 'filename が必要です' });
+      const { filename, id, exceptId } = req.query;
       // tenant スコープ削除（自テナントの file のみ削除可）。
       // files 削除で rows は on delete cascade により連動削除
-      await sbFetch(`${TABLE}?tenant_id=${eq(tid)}&filename=${eq(filename)}`, { method: 'DELETE' });
+      if (id) {
+        // 1件だけ削除（保存途中で失敗した新しい file の後片付け用）
+        if (!UUID_RE.test(id)) return res.status(400).json({ error: 'id が不正です' });
+        await sbFetch(`${TABLE}?tenant_id=${eq(tid)}&id=${eq(id)}`, { method: 'DELETE' });
+        return res.status(200).json({ ok: true });
+      }
+      if (!filename) return res.status(400).json({ error: 'filename が必要です' });
+      // exceptId 指定時は、そのファイル（新しく保存し終えたもの）を残して同名の古いものだけ消す
+      if (exceptId && !UUID_RE.test(exceptId)) return res.status(400).json({ error: 'exceptId が不正です' });
+      const except = exceptId ? `&id=neq.${exceptId}` : '';
+      await sbFetch(`${TABLE}?tenant_id=${eq(tid)}&filename=${eq(filename)}${except}`, { method: 'DELETE' });
       return res.status(200).json({ ok: true });
     }
 
