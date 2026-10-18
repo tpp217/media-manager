@@ -519,6 +519,8 @@ async function saveAllFilesToDb() {
 
   sysLog(`DB保存開始: ${readyFiles.length}ファイル`, 'ok');
   let saved = 0;
+  const failed = [];
+  // 1件失敗しても残りのファイルは保存を続ける（失敗分は最後にまとめて知らせる）
   for (const f of readyFiles) {
     try {
       // ファイル自身の月ベースで folder_name を生成（まとめアップロード時のズレを回避）
@@ -533,14 +535,19 @@ async function saveAllFilesToDb() {
       sysLog(`  ${f.name} → ${result.row_count}行 (month: ${result.month})`, 'ok');
     } catch (err) {
       sysLog(`  ${f.name} 保存失敗: ${err.message}`, 'error');
-      throw err;
+      failed.push(f.name);
     }
   }
-  sysLog(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'ok');
-  toast(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'success');
+  if (failed.length === 0) {
+    sysLog(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'ok');
+    toast(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'success');
+  } else {
+    sysLog(`DB保存: ${saved}/${readyFiles.length}ファイル成功 / 失敗: ${failed.join(' / ')}`, 'error');
+    toast(`${failed.length}ファイルの保存に失敗しました。ログを確認して、そのファイルだけもう一度アップロードしてください: ${failed.join('、')}`, 'error');
+  }
 
   // 同じ月に、今回アップロードしていない古いファイルが残っていないか確認（ファイル名を変えた場合など）
-  const uploadedNames = new Set(readyFiles.map(f => f.name));
+  const uploadedNames = new Set(readyFiles.map(f => f.name));  // 失敗分も「今回のファイル」として扱う
   const months = [...new Set(readyFiles.map(f => extractMonth(f.name)).filter(Boolean))];
   for (const month of months) {
     try {
