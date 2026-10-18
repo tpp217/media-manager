@@ -1570,3 +1570,16 @@ a:hover { color: var(--blue-2); }
 .page-btn:focus-visible {
   outline-offset: 1px;
 }
+
+/* 前月のみ（今月は無い）行: 今月の行と見分けがつくよう薄く・打ち消し線 */
+.data-table tr.row-removed td { color: var(--text-mute); text-decoration: line-through; background: var(--red-soft); }
+.data-table tr.row-removed td .removed-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  text-decoration: none;
+  color: var(--red);
+  border: 1px solid var(--red);
+}

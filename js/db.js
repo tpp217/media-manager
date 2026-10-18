@@ -101,12 +101,55 @@ function extractMonth(filename) {
   return `${m[1]}-${String(m[2]).padStart(2, '0')}`;
 }
 
-/** 行の全列を SHA-1 でハッシュ化（前月比較用） */
+/**
+ * 表記ゆれの正規化（全角英数・記号 → 半角（「～」は除く） / 半角カナ → 全角 / 全角スペース → 半角、前後空白除去・連続空白を1つに）
+ * 例: "ＭＥＯ" → "MEO"、"ﾊｯｸﾍﾞﾘｰ" → "ハックベリー"
+ * NFKC を全文にかけると "①"→"1" や "㈱"→"(株)" まで変わるため、全角英数記号・半角カナ・全角スペースだけに限定する。
+ */
+function normalizeText(v) {
+  return String(v ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\uFF01-\uFF5D\uFF61-\uFF9F\u3000]+/g, s => s.normalize('NFKC'))
+    .normalize('NFC')                 // "カ" + 濁点 のような分かれた文字を1文字にまとめる
+    .replace(/[^\S\n]+/g, ' ')        // セル内改行は残し、それ以外の連続空白を1つに
+    .replace(/ *\n */g, '\n')
+    .trim();
+}
+
+/** 行の文字列列をまとめて正規化（金額・色などはそのまま） */
+function normalizeRow(r) {
+  return {
+    ...r,
+    brand: normalizeText(r.brand),
+    category: normalizeText(r.category),
+    agency: normalizeText(r.agency),
+    media: normalizeText(r.media),
+    plan: normalizeText(r.plan),
+    note: normalizeText(r.note),
+  };
+}
+
+/** 突合用の比較値（正規化＋英字の大文字小文字を区別しない） */
+function matchText(v) {
+  return normalizeText(v).replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** 金額セルの文字列を数値に（"１，０００円" → 1000、"▲1,000" / "△1,000" → -1000） */
+function parseAmount(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  let s = normalizeText(v);
+  const negative = /^[▲△]/.test(s) || /^\(.*\)$/.test(s);
+  s = s.replace(/[^\d.-]/g, '');
+  const n = parseFloat(s) || 0;
+  return negative ? -Math.abs(n) : n;
+}
+
+/** 行の全列を SHA-1 でハッシュ化（DB 保存用。表記ゆれは正規化してから計算） */
 async function computeRowHash(row) {
   const text = [
     row.brand, row.category, row.agency, row.media,
-    row.plan, row.note, String(row.amount ?? '')
-  ].join('\t');
+    row.plan, row.note
+  ].map(normalizeText).concat(String(Number(row.amount) || 0)).join('\t');
   const buf = new TextEncoder().encode(text);
   const hashBuf = await crypto.subtle.digest('SHA-1', buf);
   return Array.from(new Uint8Array(hashBuf))
@@ -140,7 +183,7 @@ async function saveFileToDb(filename, folderName, rows) {
   });
 
   // rowsレコードを準備
-  const rowRecords = await Promise.all(rows.map(async (r, idx) => ({
+  const rowRecords = await Promise.all(rows.map(normalizeRow).map(async (r, idx) => ({
     file_id: fileData.id,
     brand: r.brand ?? '',
     category: r.category ?? '',
@@ -200,4 +243,12 @@ async function loadMonthData(month) {
   const fileIds = files.map(f => f.id).join(',');
   const rows = await apiFetch(`/api/rows?fileIds=${encodeURIComponent(fileIds)}&order=row_index`);
   return { files, rows: rows || [] };
+}
+
+/**
+ * 指定月に保存済みのファイル名一覧（今回のアップロードに含まれない古いファイルの検出用）
+ */
+async function getMonthFilenames(month) {
+  const files = await apiFetch(`/api/files?month=${encodeURIComponent(month)}`);
+  return (files || []).map(f => f.filename);
 }

@@ -393,8 +393,8 @@ function extractRows(wb) {
       const note     = getCellVal(ws, r, 5);
       const amount   = getCellVal(ws, r, 6);
 
-      // 空行をスキップ
-      if (!brand && !agency && !media) continue;
+      // 空行をスキップ（空白だけのセルも空扱い）
+      if (!normalizeText(brand) && !normalizeText(agency) && !normalizeText(media)) continue;
 
       // 各列の背景色を取得
       const cellColors = [];
@@ -402,14 +402,15 @@ function extractRows(wb) {
         cellColors.push(getCellBgColor(ws, r, c));
       }
 
+      // 表記ゆれ（全角/半角・前後空白）はここで揃える。代理店タブ・前月比較・出力すべてに効く
       rows.push({
-        brand:    String(brand || ''),
-        category: String(category || ''),
-        agency:   String(agency || '').trim(),
-        media:    String(media || ''),
-        plan:     String(plan || ''),
-        note:     String(note || ''),
-        amount:   typeof amount === 'number' ? amount : (parseFloat(String(amount).replace(/[^\d.-]/g,'')) || 0),
+        brand:    normalizeText(brand),
+        category: normalizeText(category),
+        agency:   normalizeText(agency),
+        media:    normalizeText(media),
+        plan:     normalizeText(plan),
+        note:     normalizeText(note),
+        amount:   parseAmount(amount),
         _colors:  cellColors,
         _src: sheetName,
       });
@@ -464,16 +465,13 @@ function integrateFiles() {
         return;
       }
 
-      // 代理店一覧（出現順・重複なし）
-      state.agencies = [];
-      state.allRows.forEach(r => {
-        if (r.agency && !state.agencies.includes(r.agency)) {
-          state.agencies.push(r.agency);
-        }
-      });
+      // 代理店一覧（出現順・重複なし。大文字小文字だけ違う代理店は最初の表記に揃える）
+      state.agencies = buildAgencies(state.allRows);
 
+      const genAtIntegrate = resetDiff();
       state.currentTab = 'all';
       state.searchQuery = '';
+      els.searchInput.value = '';
       state.sortCol = null;
       state.page = 1;
 
@@ -493,8 +491,11 @@ function integrateFiles() {
 
       // DB保存 → 前月比較（どちらも非同期・UIをブロックしない）
       saveAllFilesToDb().then(() => {
-        const currentMonth = state.files[0] && extractMonth(state.files[0].name);
-        if (currentMonth) return applyDiffHighlight(currentMonth);
+        if (genAtIntegrate !== diffGeneration) return; // 保存中に画面を切り替えた
+        // 複数の月をまとめて入れた場合は、どの月と比べるか決められないので比較しない
+        const months = [...new Set(state.files.filter(f => f.status === 'ready').map(f => extractMonth(f.name)).filter(Boolean))];
+        if (months.length === 1) return applyDiffHighlight(months[0]);
+        if (months.length > 1) sysLog(`複数の月（${months.join(', ')}）が含まれるため、前月比較は行いません`, 'warn');
       }).catch(err => {
         sysLog('DB処理失敗: ' + err.message, 'error');
         toast('DB処理に失敗しました: ' + err.message, 'error');
@@ -537,6 +538,21 @@ async function saveAllFilesToDb() {
   }
   sysLog(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'ok');
   toast(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'success');
+
+  // 同じ月に、今回アップロードしていない古いファイルが残っていないか確認（ファイル名を変えた場合など）
+  const uploadedNames = new Set(readyFiles.map(f => f.name));
+  const months = [...new Set(readyFiles.map(f => extractMonth(f.name)).filter(Boolean))];
+  for (const month of months) {
+    try {
+      const leftovers = (await getMonthFilenames(month)).filter(n => !uploadedNames.has(n));
+      if (leftovers.length > 0) {
+        sysLog(`注意: ${month} に今回含まれないファイルが残っています → ${leftovers.join(' / ')}`, 'warn');
+        toast(`${month} に今回含まれないファイルが${leftovers.length}件残っています（ログ参照）`, 'warn');
+      }
+    } catch (err) {
+      sysLog('残りファイルの確認に失敗: ' + err.message, 'warn');
+    }
+  }
   // 保存後、月一覧を更新
   refreshPastMonthList().catch(err => sysLog('月一覧の更新に失敗: ' + err.message, 'warn'));
 }
@@ -569,7 +585,7 @@ function buildTooltipHTML(r) {
     ['備考',     'note',     r.note,     prev.note],
   ];
   for (const [label, key, cur, pv] of pairs) {
-    if (String(cur ?? '') !== String(pv ?? '')) {
+    if (matchText(cur) !== matchText(pv)) {
       rows.push(`<div class="diff-tt-row"><span class="diff-tt-label">${label}</span><span class="diff-tt-val">${escHtml(pv || '(空)')} → ${escHtml(cur || '(空)')}</span></div>`);
     }
   }
@@ -623,55 +639,116 @@ initDiffTooltip();
 
 /**
  * 行の「突合キー」（ブランド + 代理店 + 媒体 + プラン）
- * 完全一致ハッシュ(全列)とは別の、ゆるめのキー。ツールチップで前月値を引くのに使う。
+ * 完全一致キー(全列)とは別の、ゆるめのキー。ツールチップで前月値を引くのに使う。
+ * 全角/半角・大文字小文字の違いは同じものとして扱う（例: "MEO" と "ＭＥＯ"）。
  */
 function softKey(r) {
-  return [r.brand ?? '', r.agency ?? '', r.media ?? '', r.plan ?? ''].join('\u0001');
+  return [r.brand, r.agency, r.media, r.plan].map(matchText).join('\u0001');
+}
+
+/** 全列の突合キー（金額含む）。DB の row_hash は古いデータだと正規化前の値なので使わない */
+function fullKey(r) {
+  return [r.brand, r.category, r.agency, r.media, r.plan, r.note].map(matchText)
+    .concat(String(Number(r.amount) || 0)).join('\u0001');
+}
+
+/** 前月比較の世代番号。比較中に別のデータへ切り替わったら古い結果を捨てる */
+let diffGeneration = 0;
+
+/** 比較情報を消す（データ切り替え時） */
+function resetDiff() {
+  diffGeneration++;
+  state.diffInfo = null;
+  state.removedRows = [];
+  state.allRows.forEach(r => { delete r._isNew; delete r._prevMatch; });
+  els.summaryDiffWrap.style.display = 'none';
+  return diffGeneration;
+}
+
+/**
+ * 代理店一覧（出現順）を作り、行の代理店表記を揃える。
+ * 「ABC」と「abc」のように大文字小文字だけ違う場合は、最初に出てきた表記にまとめる。
+ */
+function buildAgencies(rows) {
+  const firstByKey = new Map();
+  const agencies = [];
+  for (const r of rows) {
+    if (!r.agency) continue;
+    const k = matchText(r.agency);
+    if (!firstByKey.has(k)) { firstByKey.set(k, r.agency); agencies.push(r.agency); }
+    r.agency = firstByKey.get(k);
+  }
+  return agencies;
+}
+
+/** キー → 行リスト */
+function groupBy(rows, keyFn) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = keyFn(r);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(r);
+  }
+  return m;
 }
 
 /**
  * 前月データと比較して、今月の各行にマーク＋前月候補を添付。
- * - _isNew: ケースC(全列一致ハッシュ)で前月に無い行
- * - _prevMatch: 突合キーで見つけた前月の同じ項目(なければnull)
- * 削除された行(前月にあり今月に無い)は state.removedRows に格納。
+ * 1) 全列一致の行どうしを先にペアにする（変更なし）
+ * 2) 残りを突合キー（ブランド+代理店+媒体+プラン）でペアにする（変更あり）
+ * 3) ペアにならなかった今月行 = 新規、前月行 = 削除（state.removedRows）
+ * 同じキーの行が複数あっても1対1で消し込むので、正しい行が「削除」「変更前」になる。
  */
 async function applyDiffHighlight(currentMonth) {
+  const gen = ++diffGeneration;
   try {
-    const { prevMonth, rows: prevRows } = await getPrevMonthRows(currentMonth);
+    const { prevMonth, rows: rawPrevRows } = await getPrevMonthRows(currentMonth);
+    if (gen !== diffGeneration) return; // 比較中に別のデータへ切り替わった
+    const prevRows = rawPrevRows.map(r => normalizeRow({ ...r, amount: Number(r.amount) || 0 }));
 
     if (prevRows.length === 0) {
       sysLog(`前月(${prevMonth})のデータがないため、差分ハイライトなし`, 'warn');
-      state.diffInfo = null;
-      state.removedRows = [];
-      els.summaryDiffWrap.style.display = 'none';
+      resetDiff();
       renderTable();
       return;
     }
 
-    // 前月データをハッシュSet＋softKey→rowマップに整理
-    const prevHashSet = new Set(prevRows.map(r => r.row_hash));
-    const prevBySoftKey = new Map();
-    for (const pr of prevRows) {
-      prevBySoftKey.set(softKey(pr), pr);
+    const used = new Set();   // ペア済みの前月行
+    const pending = [];       // 全列一致しなかった今月行
+
+    // 1) 全列一致
+    const prevByFull = groupBy(prevRows, fullKey);
+    for (const r of state.allRows) {
+      const pr = (prevByFull.get(fullKey(r)) || []).find(p => !used.has(p));
+      if (pr) {
+        used.add(pr);
+        r._isNew = false;
+        r._prevMatch = pr;
+      } else {
+        pending.push(r);
+      }
     }
 
-    // 現在行: ハッシュ算出 + softKeyで前月候補添付
+    // 2) 突合キーで残りをペアに
+    const prevBySoft = groupBy(prevRows, softKey);
     let newCount = 0;
-    await Promise.all(state.allRows.map(async r => {
-      const h = await computeRowHash(r);
-      r._isNew = !prevHashSet.has(h);
-      r._prevMatch = prevBySoftKey.get(softKey(r)) || null;
-      if (r._isNew) newCount++;
-    }));
+    for (const r of pending) {
+      const pr = (prevBySoft.get(softKey(r)) || []).find(p => !used.has(p)) || null;
+      if (pr) used.add(pr);
+      r._isNew = true;
+      r._prevMatch = pr;
+      newCount++;
+    }
 
-    // 削除行: 前月にあって今月に無い = softKeyが今月に存在しない
-    const currentKeys = new Set(state.allRows.map(softKey));
+    // 3) 使われなかった前月行 = 削除。代理店表記は今月の表記に揃える
+    const agencyByKey = new Map(state.agencies.map(a => [matchText(a), a]));
     state.removedRows = prevRows
-      .filter(pr => !currentKeys.has(softKey(pr)))
+      .filter(pr => !used.has(pr))
       .map(pr => ({
-        brand: pr.brand, category: pr.category, agency: pr.agency,
+        brand: pr.brand, category: pr.category,
+        agency: agencyByKey.get(matchText(pr.agency)) || pr.agency,
         media: pr.media, plan: pr.plan, note: pr.note,
-        amount: Number(pr.amount) || 0,
+        amount: pr.amount,
         _isRemoved: true,
       }));
 
@@ -730,7 +807,7 @@ els.btnLoadPast.addEventListener('click', async () => {
     state.files = files.map(f => ({
       file: null, name: f.filename, size: 0, status: 'ready', wb: null,
       rows: rows.filter(r => r.file_id === f.id)
-        .map(r => ({
+        .map(r => normalizeRow({
           brand: r.brand, category: r.category, agency: r.agency,
           media: r.media, plan: r.plan, note: r.note, amount: Number(r.amount) || 0,
           // _colors は列インデックス参照の配列。DB の colors が無い場合も配列で復元する
@@ -743,10 +820,8 @@ els.btnLoadPast.addEventListener('click', async () => {
       f.rows.forEach(row => state.allRows.push({ ...row, _file: f.name }));
     });
 
-    state.agencies = [];
-    state.allRows.forEach(r => {
-      if (r.agency && !state.agencies.includes(r.agency)) state.agencies.push(r.agency);
-    });
+    state.agencies = buildAgencies(state.allRows);
+    resetDiff();
 
     // ファイル名用: 表示する月から直接生成 "2026-05" → "媒体管理表2026.5"
     // (DBの folder_name はアップロード時の state.folderName を保存しているため、
@@ -761,6 +836,7 @@ els.btnLoadPast.addEventListener('click', async () => {
 
     state.currentTab = 'all';
     state.searchQuery = '';
+    els.searchInput.value = '';
     state.sortCol = null;
     state.page = 1;
 
@@ -835,7 +911,7 @@ function renderTable() {
     const cols = r._colors || [];
     return `
     <tr${cls ? ` class="${cls}"` : ''} data-idx="${i}">
-      <td${cellFillAttr(cols[0])}>${escHtml(r.brand)}</td>
+      <td${cellFillAttr(cols[0])}>${r._isRemoved ? '<span class="removed-badge">前月のみ</span>' : ''}${escHtml(r.brand)}</td>
       <td${cellFillAttr(cols[1])}>${escHtml(r.category)}</td>
       <td${cellFillAttr(cols[2])}>${escHtml(r.agency)}</td>
       <td${cellFillAttr(cols[3])}>${escHtml(r.media)}</td>
@@ -867,6 +943,7 @@ function renderTable() {
     const icon = th.querySelector('.sort-icon');
     if (th.dataset.col === state.sortCol) {
       icon.textContent = state.sortDir === 'asc' ? '↑' : '↓';
+      icon.style.opacity = '';
     } else {
       icon.textContent = '⇅';
       icon.style.opacity = '.4';
@@ -886,10 +963,10 @@ function renderTable() {
 
 function filteredRows() {
   const tabFilter = r => state.currentTab === 'all' || r.agency === state.currentTab;
-  const q = state.searchQuery.trim().toLowerCase();
+  const q = matchText(state.searchQuery);
   // 検索対象は可視列のみに限定（_colors/_src 等の内部フィールドが [object Object] で誤マッチするのを防ぐ）
   const SEARCH_FIELDS = ['brand', 'category', 'agency', 'media', 'plan', 'note', 'amount'];
-  const searchFilter = r => !q || SEARCH_FIELDS.some(k => String(r[k] ?? '').toLowerCase().includes(q));
+  const searchFilter = r => !q || SEARCH_FIELDS.some(k => matchText(r[k]).includes(q));
 
   let rows = state.allRows.filter(tabFilter).filter(searchFilter);
 
@@ -948,10 +1025,8 @@ els.btnBack.addEventListener('click', () => {
     els.masterFileName.value = '';
     els.agencyFilePrefix.value = '';
   }
-  // 前月比較情報をクリア
-  state.diffInfo = null;
-  state.removedRows = [];
-  els.summaryDiffWrap.style.display = 'none';
+  // 前月比較情報をクリア（比較中の結果も捨てる）
+  resetDiff();
 });
 
 // DATA→EXPORT
@@ -1118,8 +1193,7 @@ async function downloadMaster() {
         const rows = state.allRows.filter(r => r.agency === ag);
         if (rows.length === 0) return;
         const ws = buildSheet(rows);
-        const safeAg = ag.slice(0, 31).replace(/[\\/:?*[\]]/g,'_');
-        XLSX.utils.book_append_sheet(wb, ws, safeAg);
+        XLSX.utils.book_append_sheet(wb, ws, uniqueSheetName(ag, wb.SheetNames));
       });
     }
 
@@ -1155,8 +1229,7 @@ async function downloadAgency(agencies) {
 
       const wb = XLSX.utils.book_new();
       const ws = buildSheet(rows);
-      const safeAg = ag.slice(0, 31).replace(/[\\/:?*[\]]/g,'_');
-      XLSX.utils.book_append_sheet(wb, ws, safeAg);
+      XLSX.utils.book_append_sheet(wb, ws, uniqueSheetName(ag, wb.SheetNames));
 
       const prefix = els.agencyFilePrefix.value || '媒体管理表';
       const fname = `【${ag}】${prefix}.xlsx`;
@@ -1308,6 +1381,21 @@ async function writeWorkbook(wb, fname) {
 /* ============================================================
    UTILITIES
    ============================================================ */
+/**
+ * Excel のシート名に使える形にする（31文字以内・禁止文字置換・重複時は連番）
+ * 長い代理店名が31文字で切れて同じ名前になると、書き出しがエラーで止まるのを防ぐ
+ */
+function uniqueSheetName(name, existing) {
+  const base = String(name || 'Sheet').replace(/[\\/:?*[\]]/g, '_').replace(/^'+|'+$/g, '') || 'Sheet';
+  const taken = new Set(existing.map(n => n.toLowerCase()));
+  let cand = base.slice(0, 31);
+  for (let i = 2; taken.has(cand.toLowerCase()); i++) {
+    const suffix = `(${i})`;
+    cand = base.slice(0, 31 - suffix.length) + suffix;
+  }
+  return cand;
+}
+
 function escHtml(str) {
   return String(str ?? '')
     .replace(/&/g,'&amp;')
