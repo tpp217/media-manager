@@ -711,7 +711,18 @@ async function applyDiffHighlight(currentMonth) {
   try {
     const { prevMonth, rows: rawPrevRows } = await getPrevMonthRows(currentMonth);
     if (gen !== diffGeneration) return; // 比較中に別のデータへ切り替わった
-    const prevRows = rawPrevRows.map(r => normalizeRow({ ...r, amount: Number(r.amount) || 0 }));
+    let prevRows = rawPrevRows.map(r => normalizeRow({ ...r, amount: Number(r.amount) || 0 }));
+
+    // 一部の店舗だけ入れ直した場合は、今回入れた店舗の前月分とだけ比べる
+    // （入れていない店舗の前月分が全部「前月のみ」と出るのを防ぐ）。
+    // 店舗の目印が1つも重ならないとき（ファイル名の付け方を変えた等）は従来どおり全店と比べる。
+    const curStores = new Set(state.allRows.map(r => fileStoreKey(r._file)));
+    const prevStores = new Set(prevRows.map(r => fileStoreKey(r._file)));
+    const shared = [...prevStores].filter(k => curStores.has(k));
+    if (shared.length > 0 && shared.length < prevStores.size) {
+      prevRows = prevRows.filter(r => curStores.has(fileStoreKey(r._file)));
+      sysLog(`前月比較: 今回入れた ${shared.length} 店舗分だけと比べます（前月 ${prevStores.size} 店舗中）`, 'info');
+    }
 
     if (prevRows.length === 0) {
       sysLog(`前月(${prevMonth})のデータがないため、差分ハイライトなし`, 'warn');
