@@ -25,6 +25,49 @@ const state = {
 };
 
 /* ============================================================
+   EXCEL LIBS（必要になったときだけ読み込む）
+   xlsx-js-style は約1MBあり、<head> で同期読み込みすると画面が出るまで待たされるため、
+   読み込み・出力の直前にここで読み込む。表示後の空き時間に先読みもしておく。
+   ============================================================ */
+const EXCEL_LIBS = [
+  { global: 'XLSX',  src: 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js' },
+  { global: 'JSZip', src: 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js' },
+];
+let excelLibsPromise = null;
+// セルの背景色として扱う 6 桁の色コード
+const HEX6 = /^[0-9A-Fa-f]{6}$/;
+
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => { s.remove(); reject(new Error('ライブラリの読み込みに失敗しました: ' + src)); };
+    document.head.appendChild(s);
+  });
+}
+
+function ensureExcelLibs() {
+  if (EXCEL_LIBS.every(l => window[l.global])) return Promise.resolve();
+  if (!excelLibsPromise) {
+    excelLibsPromise = Promise.all(
+      EXCEL_LIBS.map(l => (window[l.global] ? Promise.resolve() : loadScriptOnce(l.src)))
+    ).catch(err => {
+      excelLibsPromise = null; // 通信失敗のあとで再試行できるようにする
+      throw err;
+    });
+  }
+  return excelLibsPromise;
+}
+
+// 画面表示が落ち着いてから先読み（失敗しても、使うときにもう一度読み込む）
+window.addEventListener('load', () => {
+  const idle = window.requestIdleCallback || (cb => setTimeout(cb, 1500));
+  idle(() => ensureExcelLibs().catch(() => {}));
+});
+
+/* ============================================================
    DOM REFS
    ============================================================ */
 const $ = id => document.getElementById(id);
@@ -99,7 +142,9 @@ function sysLog(msg, type='info') {
   entry.className = `log-entry ${type}`;
   const now = new Date();
   const ts = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
-  entry.innerHTML = `<span class="log-time">[${ts}]</span><span class="log-msg">${msg}</span>`;
+  // msg にはファイル名・保存済みの他の人のファイル名・サーバーのエラー文が入るので、HTML として解釈しない
+  entry.innerHTML = `<span class="log-time">[${ts}]</span><span class="log-msg"></span>`;
+  entry.querySelector('.log-msg').textContent = String(msg);
   els.logBody.appendChild(entry);
   els.logBody.scrollTop = els.logBody.scrollHeight;
 }
@@ -127,8 +172,8 @@ function showLoading(title='PROCESSING...', sub='') {
     document.body.appendChild(ov);
   }
   ov.innerHTML = `
-    <div class="loading-title">${title}</div>
-    <div class="loading-sub">${sub}</div>
+    <div class="loading-title">${escHtml(title)}</div>
+    <div class="loading-sub">${escHtml(sub)}</div>
     <div class="loading-bar-wrap"><div class="loading-bar"></div></div>
   `;
   ov.style.display = 'flex';
@@ -223,21 +268,30 @@ function getFileFromEntry(entry) {
   return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
 
+function readDirBatch(reader) {
+  return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+}
+
 async function collectFromDirectory(dirEntry, files) {
   const reader = dirEntry.createReader();
-  return new Promise(resolve => {
-    reader.readEntries(async entries => {
-      for (const entry of entries) {
-        if (entry.isDirectory) {
-          await collectFromDirectory(entry, files);
-        } else if (entry.isFile && /\.(xlsx|xls)$/i.test(entry.name)) {
-          const file = await getFileFromEntry(entry);
-          files.push(file);
+  // readEntries は 1 回で最大 100 件ほどしか返さないので、空になるまで繰り返す
+  // （1 回だけだと 100 件を超えるフォルダの残りが黙って読み込まれない）
+  for (;;) {
+    const entries = await readDirBatch(reader);
+    if (entries.length === 0) break;
+    for (const entry of entries) {
+      if (entry.isDirectory) {
+        await collectFromDirectory(entry, files);
+      } else if (entry.isFile && /\.(xlsx|xls)$/i.test(entry.name)) {
+        try {
+          files.push(await getFileFromEntry(entry));
+        } catch (err) {
+          sysLog(`READ ERROR: ${entry.name} — ${err && err.message ? err.message : err}`, 'error');
+          toast(`${entry.name} を読み込めませんでした`, 'error');
         }
       }
-      resolve();
-    });
-  });
+    }
+  }
 }
 
 /**
@@ -335,7 +389,22 @@ els.btnClearFiles.addEventListener('click', clearFiles);
    PARSE EXCEL FILES
    ============================================================ */
 function parseAllFiles() {
-  const pending = state.files.filter(f => f.status === 'loading');
+  // 読み込み待ちの間に次のファイルが追加されても、同じファイルを二重に読まない
+  const pending = state.files.filter(f => f.status === 'loading' && !f._parsing);
+  if (pending.length === 0) return;
+  pending.forEach(entry => { entry._parsing = true; });
+  ensureExcelLibs().then(() => parseEntries(pending), err => {
+    // 一覧から外して、同じファイルをもう一度追加できるようにする（重複スキップに掛からないように）
+    state.files = state.files.filter(f => !pending.includes(f));
+    sysLog(`PARSE ERROR: ${err.message}`, 'error');
+    toast('Excel 読み込み用の部品を取得できませんでした。通信を確認して、もう一度ファイルを追加してください', 'error');
+    renderFileList();
+    if (state.files.length === 0) clearFiles();
+    checkIntegrateReady();
+  });
+}
+
+function parseEntries(pending) {
   let done = 0;
   pending.forEach(entry => {
     const reader = new FileReader();
@@ -352,6 +421,15 @@ function parseAllFiles() {
         sysLog(`PARSE ERROR: ${entry.name} — ${err.message}`, 'error');
         toast(`${entry.name} の読み込みに失敗しました`, 'error');
       }
+      done++;
+      renderFileList();
+      if (done === pending.length) checkIntegrateReady();
+    };
+    reader.onerror = () => {
+      // ファイルが消された・ロックされた等で読めないとき、「...」のまま止まらないようにする
+      entry.status = 'error';
+      sysLog(`READ ERROR: ${entry.name} — ${reader.error ? reader.error.message : 'unknown'}`, 'error');
+      toast(`${entry.name} を読み込めませんでした`, 'error');
       done++;
       renderFileList();
       if (done === pending.length) checkIntegrateReady();
@@ -441,6 +519,7 @@ function getCellBgColor(ws, r, c) {
 
   // 8桁(AARRGGBB) → 6桁(RRGGBB) に正規化
   const rgb = fg.rgb.length === 8 ? fg.rgb.slice(2) : fg.rgb;
+  if (!HEX6.test(rgb)) return null; // 色コード以外（壊れた・細工されたファイル）は色なし扱い
 
   // 白・黒はnull扱い
   if (rgb === 'FFFFFF' || rgb === '000000') return null;
@@ -781,7 +860,7 @@ async function refreshPastMonthList() {
     const months = await getSavedMonths();
     els.pastMonthSelect.innerHTML = '<option value="">-- 月を選択 --</option>' +
       months.map(m =>
-        `<option value="${m.month}">${m.month}（${m.file_count}ファイル / ${m.total_rows}行）</option>`
+        `<option value="${escHtml(m.month)}">${escHtml(m.month)}（${m.file_count}ファイル / ${m.total_rows}行）</option>`
       ).join('');
     sysLog(`月一覧取得: ${months.length}件`, 'ok');
   } catch (err) {
@@ -811,9 +890,11 @@ els.btnLoadPast.addEventListener('click', async () => {
     const fileMap = {};
     files.forEach(f => { fileMap[f.id] = f; });
 
+    // file_id ごとにまとめてから割り当てる（ファイル数×行数の全件走査を避ける）
+    const rowsByFile = groupBy(rows, r => r.file_id);
     state.files = files.map(f => ({
       file: null, name: f.filename, size: 0, status: 'ready', wb: null,
-      rows: rows.filter(r => r.file_id === f.id)
+      rows: (rowsByFile.get(f.id) || [])
         .map(r => normalizeRow({
           brand: r.brand, category: r.category, agency: r.agency,
           media: r.media, plan: r.plan, note: r.note, amount: Number(r.amount) || 0,
@@ -1187,6 +1268,7 @@ async function downloadMaster() {
   showLoading('GENERATING...', 'Excelファイルを生成中');
   await new Promise(r => setTimeout(r, 200));
   try {
+    await ensureExcelLibs();
     const wb = XLSX.utils.book_new();
     const includeAll    = els.optAllSheet.checked;
     const includeAgency = els.optAgencySheets.checked;
@@ -1229,6 +1311,7 @@ async function downloadAgency(agencies) {
   showLoading('GENERATING...', 'Excelファイルを生成中');
   await new Promise(r => setTimeout(r, 200));
   try {
+    await ensureExcelLibs();
     let count = 0;
     for (const ag of agencies) {
       const rows = state.allRows.filter(r => r.agency === ag);
@@ -1421,7 +1504,8 @@ function fmtYen(val) {
  * 背景の明度から文字色を自動判定し、暗い塗りつぶしでも文字を読めるようにする
  */
 function cellFillAttr(rgb) {
-  if (!rgb) return '';
+  // DB から戻った値もそのまま style に入るので、6桁の色コード以外は使わない
+  if (typeof rgb !== 'string' || !HEX6.test(rgb)) return '';
   const r = parseInt(rgb.slice(0, 2), 16);
   const g = parseInt(rgb.slice(2, 4), 16);
   const b = parseInt(rgb.slice(4, 6), 16);

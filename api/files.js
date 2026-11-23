@@ -1,10 +1,11 @@
 // 媒体ファイル（files）API。認証必須。月・ファイル名の限定操作のみ。
 // 全クエリを呼び出し元 tenant_id にスコープする（クロステナント漏洩防止・主たる防御＝アプリ層）。
-import { sbFetch, eq, requireAuth } from './_lib/util.js';
-import { evaluateAuth, sendBlock, resolveTenant } from './_lib/auth-gate.js';
+import { sbFetch, fetchAllPages, eq, requireAuth } from './_lib/util.js';
+import { evaluateAuth, sendBlock, resolveTenant, tenantFailStatus } from './_lib/auth-gate.js';
 
 const TABLE = 'files';
 const UUID_RE = /^[0-9a-f-]{36}$/i;
+const MONTH_RE = /^\d{4}-\d{2}$/;
 
 export default async function handler(req, res) {
   // 認証ゲート（workspace-hub JWT を JWKS 検証 / 既定は監視のみ・ブロックしない）。
@@ -27,7 +28,7 @@ export default async function handler(req, res) {
   });
   if (!t.ok) {
     console.warn(`[files] tenant_unresolved reason=${t.reason}`);
-    return res.status(403).json({ error: 'テナントを特定できませんでした（再ログインしてください）' });
+    return res.status(tenantFailStatus(t.reason)).json({ error: 'テナントを特定できませんでした（再ログインしてください）' });
   }
   const tid = t.tenantId;
 
@@ -35,7 +36,8 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const { month, summary } = req.query;
       if (summary) {
-        const rows = await sbFetch(`${TABLE}?tenant_id=${eq(tid)}&select=month,row_count`);
+        // 1000 件で黙って切れないよう、全ページ取る（ファイルが多いテナントで古い月が一覧から消えないように）
+        const rows = await fetchAllPages(`${TABLE}?tenant_id=${eq(tid)}&select=month,row_count&order=id`);
         return res.status(200).json(rows || []);
       }
       if (month) {
@@ -48,6 +50,8 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const { filename, month, folder_name, row_count } = req.body || {};
       if (!filename || !month) return res.status(400).json({ error: 'filename / month が必要です' });
+      if (typeof filename !== 'string' || filename.length > 255) return res.status(400).json({ error: 'filename が不正です' });
+      if (typeof month !== 'string' || !MONTH_RE.test(month)) return res.status(400).json({ error: 'month は YYYY-MM の形にしてください' });
       // tenant_id はサーバーで強制（クライアント値は信用しない）。
       const inserted = await sbFetch(TABLE, {
         method: 'POST',

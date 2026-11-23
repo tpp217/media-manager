@@ -23,10 +23,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<!-- xlsx-js-style (スタイル書き込み対応版SheetJS) -->
-<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-<!-- JSZip (ヘッダー固定用XMLパッチに使用) -->
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<!-- xlsx-js-style（約1MB）/ JSZip は Excel の読み込み・出力のときだけ使うので、
+     画面表示を止めないよう js/app.js の ensureExcelLibs() があとから読み込む（表示後の空き時間に先読みもする）。 -->
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" href="css/style.css?v=202604230001">
 <script>
   // 動作モード（単体版/プラットフォーム版）を保持。/api/app-mode で取得。
@@ -40,6 +39,9 @@
   // 併せて me の本文から identity（テナント名 / 氏名 / 所属部署）を読み、ヘッダに描画する。
   (function () {
     // まずモードを判定（単体版は /login、プラットフォーム版は SSO へ誘導）。
+    // app-mode と me は互いに依存しないので同時に問い合わせる（往復 1 回分の待ちを減らす）。
+    var meReq = fetch('/api/auth/me', { credentials: 'same-origin' });
+    meReq.catch(function () { /* 失敗は下の .catch でまとめて扱う */ });
     fetch('/api/app-mode', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (m) { window.__MEDIA_STANDALONE__ = !!(m && m.standalone); })
@@ -58,7 +60,7 @@
         } else {
           applyMode();
         }
-        return fetch('/api/auth/me', { credentials: 'same-origin' });
+        return meReq;
       })
       .then(function (r) {
         if (!r.ok) {
