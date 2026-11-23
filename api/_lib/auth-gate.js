@@ -317,3 +317,18 @@ export async function resolveTenant({ authHeader, cookieHeader } = {}) {
   }
   return { ok: true, tenantId, claims: verified.claims };
 }
+
+/**
+ * resolveTenant の失敗理由から返す HTTP ステータスを決める。
+ * wh_token が無い（15 分で cookie が切れた）・期限切れ・署名が合わない場合は 401 にして、
+ * 画面（js/db.js の apiFetch）の「無音で SSO 再ログイン」を働かせる。
+ * 以前はすべて 403 だったため、ログインから約 15 分たつと保存・読み込みが「テナントを特定できません」で
+ * 止まり続け、再読み込みでも直らなかった（/api/auth/me は 12 時間の media_session で 200 を返すため）。
+ * それ以外（tenant_id クレームが無い・単体版の設定漏れ・JWKS の取得失敗など）は、再ログインで直らないので 403 のまま。
+ */
+export function tenantFailStatus(reason) {
+  const r = String(reason || '');
+  if (r === 'no_token') return 401;
+  if (r.startsWith('ERR_JWT') || r.startsWith('ERR_JWS')) return 401;
+  return 403;
+}

@@ -2,8 +2,14 @@
   "github": {
     "silent": false
   },
+  "regions": [
+    "hnd1"
+  ],
   "rewrites": [
-    { "source": "/login", "destination": "/login.html" }
+    {
+      "source": "/login",
+      "destination": "/login.html"
+    }
   ],
   "headers": [
     {

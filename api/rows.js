@@ -1,13 +1,21 @@
 // 行データ（rows）API。認証必須。file_id 群での取得とバッチ挿入のみ。
 // 全クエリを呼び出し元 tenant_id にスコープする（クロステナント漏洩防止・主たる防御＝アプリ層）。
-import { sbFetch, eq, requireAuth } from './_lib/util.js';
-import { evaluateAuth, sendBlock, resolveTenant } from './_lib/auth-gate.js';
+import { sbFetch, fetchAllPages, eq, requireAuth } from './_lib/util.js';
+import { evaluateAuth, sendBlock, resolveTenant, tenantFailStatus } from './_lib/auth-gate.js';
 
 const TABLE = 'rows';
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 const PAGE_SIZE = 1000;
+// 2 ページ目以降を同時に取りに行く本数（Supabase への同時接続を増やしすぎない）
+const PARALLEL_PAGES = 4;
 // クライアントが挿入できる列（tenant_id / id などはサーバー側で決める）。
 const INSERTABLE = ['file_id', 'brand', 'category', 'agency', 'media', 'plan', 'note', 'amount', 'row_index', 'row_hash', 'colors'];
+
+const HEX6 = /^[0-9A-Fa-f]{6}$/;
+function sanitizeColors(v) {
+  if (!Array.isArray(v)) return null;
+  return v.map((c) => (typeof c === 'string' && HEX6.test(c) ? c : null));
+}
 
 export default async function handler(req, res) {
   // 認証ゲート（workspace-hub JWT を JWKS 検証 / 既定は監視のみ・ブロックしない）。
@@ -30,7 +38,7 @@ export default async function handler(req, res) {
   });
   if (!t.ok) {
     console.warn(`[rows] tenant_unresolved reason=${t.reason}`);
-    return res.status(403).json({ error: 'テナントを特定できませんでした（再ログインしてください）' });
+    return res.status(tenantFailStatus(t.reason)).json({ error: 'テナントを特定できませんでした（再ログインしてください）' });
   }
   const tid = t.tenantId;
 
@@ -44,13 +52,7 @@ export default async function handler(req, res) {
       // (file_id, row_index) はファイル内で一意なので、両方を順序キーに含めてページ境界を安定させる。
       const orderBy = order === 'row_index' ? 'row_index,file_id' : 'file_id,row_index';
       const base = `${TABLE}?tenant_id=${eq(tid)}&file_id=in.(${ids.join(',')})&select=*&order=${orderBy}`;
-      const all = [];
-      for (let offset = 0; ; ) {
-        const page = (await sbFetch(`${base}&limit=${PAGE_SIZE}&offset=${offset}`)) || [];
-        if (page.length === 0) break;
-        all.push(...page);
-        offset += page.length;
-      }
+      const all = await fetchAllPages(base, PAGE_SIZE, PARALLEL_PAGES);
       return res.status(200).json(all);
     }
 
@@ -71,6 +73,8 @@ export default async function handler(req, res) {
         const stamped = batch.map((r) => {
           const row = { tenant_id: tid };
           for (const k of INSERTABLE) if (r[k] !== undefined) row[k] = r[k];
+          // colors は画面の style に入るので、6 桁の色コード（または null）の配列だけを保存する
+          if (row.colors !== undefined) row.colors = sanitizeColors(row.colors);
           return row;
         });
         await sbFetch(TABLE, {

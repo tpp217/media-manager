@@ -37,6 +37,58 @@ export async function sbFetch(path, init = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+// sbFetch と同じだが、件数（Content-Range の "/総数"）も返す。総数が読めないときは total=null。
+// 呼び出し側で init.headers.Prefer に 'count=exact' を付けること。
+export async function sbFetchWithCount(path, init = {}) {
+  const url = `${env('SUPABASE_URL')}/rest/v1/${path}`;
+  const key = env('SUPABASE_SERVICE_KEY');
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Supabase ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const text = await res.text();
+  const m = /\/(\d+)\s*$/.exec(res.headers.get('content-range') || '');
+  return { data: text ? JSON.parse(text) : null, total: m ? Number(m[1]) : null };
+}
+
+// PostgREST の max_rows（既定 1000）で黙って欠けないよう、条件に合う行をすべて取る。
+// 1 ページ目で総数を受け取り、残りのページは parallel 本ずつ同時に取る（1 ページずつ順番に待つと、行数が多いほど遅くなる）。
+// base には order を含め、ページ境界が安定する並び順にしておくこと。
+export async function fetchAllPages(base, pageSize = 1000, parallel = 4) {
+  const first = await sbFetchWithCount(`${base}&limit=${pageSize}&offset=0`, { headers: { Prefer: 'count=exact' } });
+  const all = first.data || [];
+  // 実際に返ってきた 1 ページの件数（サーバー側の max_rows が pageSize より小さい場合に合わせる）
+  const step = all.length;
+  if (step === 0) return all;
+  if (first.total != null && first.total > step) {
+    const offsets = [];
+    for (let o = step; o < first.total; o += step) offsets.push(o);
+    for (let i = 0; i < offsets.length; i += parallel) {
+      const pages = await Promise.all(
+        offsets.slice(i, i + parallel).map((o) => sbFetch(`${base}&limit=${step}&offset=${o}`))
+      );
+      for (const page of pages) if (page) all.push(...page);
+    }
+  }
+  // 総数が読めなかった・取得中に行が増えた場合に備え、空ページまで順番に取り切る（従来の動き）。
+  for (let offset = all.length; ; ) {
+    const page = (await sbFetch(`${base}&limit=${pageSize}&offset=${offset}`)) || [];
+    if (page.length === 0) break;
+    all.push(...page);
+    offset += page.length;
+  }
+  return all;
+}
+
 // PostgREST のフィルタ値を安全にエンコードする。
 export const eq = (v) => `eq.${encodeURIComponent(v)}`;
 
