@@ -393,6 +393,9 @@ function parseAllFiles() {
   const pending = state.files.filter(f => f.status === 'loading' && !f._parsing);
   if (pending.length === 0) return;
   pending.forEach(entry => { entry._parsing = true; });
+  if (!EXCEL_LIBS.every(l => window[l.global])) {
+    els.uploadStatus.textContent = 'Excel 読み込みの準備中...'; // 初回だけ部品（約1MB）の取得を待つ
+  }
   ensureExcelLibs().then(() => parseEntries(pending), err => {
     // 一覧から外して、同じファイルをもう一度追加できるようにする（重複スキップに掛からないように）
     state.files = state.files.filter(f => !pending.includes(f));
@@ -595,6 +598,10 @@ els.btnIntegrate.addEventListener('click', integrateFiles);
 async function saveAllFilesToDb() {
   const readyFiles = state.files.filter(f => f.status === 'ready');
   if (readyFiles.length === 0) return;
+
+  // 書き込みの前にログインが生きているかを軽く確かめる。切れていればここで再ログインへ進み、
+  // 「ファイルの登録だけ済んで行が入らない」中途半端な保存を作らない（行の保存中に切れる場合を減らす）。
+  await getMonthFilenames('0000-00');
 
   sysLog(`DB保存開始: ${readyFiles.length}ファイル`, 'ok');
   let saved = 0;
