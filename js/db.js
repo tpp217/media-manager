@@ -245,7 +245,17 @@ async function getPrevMonthRows(currentMonth) {
   if (!files || files.length === 0) return { prevMonth, rows: [] };
   const fileIds = files.map(f => f.id).join(',');
   const rows = await apiFetch(`/api/rows?fileIds=${encodeURIComponent(fileIds)}`);
-  return { prevMonth, rows: rows || [] };
+  // どのファイル（店舗）の行かを付けておく（一部の店舗だけ入れ直したときの比較用）
+  const nameById = new Map(files.map(f => [f.id, f.filename]));
+  return { prevMonth, rows: (rows || []).map(r => ({ ...r, _file: nameById.get(r.file_id) || '' })) };
+}
+
+/**
+ * ファイル名から月の部分を除いた「店舗の目印」
+ * 例: "【町田】媒体管理表2026.11.xlsx" → "【町田】媒体管理表.xlsx"（10月分と同じ目印になる）
+ */
+function fileStoreKey(filename) {
+  return matchText(String(filename || '').replace(/\d{4}\.\d{1,2}/, ''));
 }
 
 /**
