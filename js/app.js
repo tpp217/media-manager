@@ -302,22 +302,33 @@ function filePathOf(file) {
   return String(file._relPath || file.webkitRelativePath || '').replace(/^\/+/, '');
 }
 
+/** ファイルが入っているフォルダ名（直上の 1 つ。分からなければ空） */
+function folderLabelOf(f) {
+  const dirs = (f.path || '').split('/').slice(0, -1).filter(Boolean);
+  return dirs.length ? dirs[dirs.length - 1].slice(0, 60) : '';
+}
+
 /**
  * 保存用のファイル名を決める。
  * DB では「同じファイル名＝前回分の置き換え」として古い方を消すため、別のフォルダにある同名ファイルを
  * そのまま保存すると、後から保存した方が先の方を消してしまう。同名が複数あるときだけ、
  * 入っているフォルダ名を後ろに付けて別のファイルとして保存する（例: 媒体管理表2026.4.xlsx（A店））。
- * フォルダ名で見分けられないときは（2）（3）…を付ける。同名が無いファイルは従来どおりの名前。
+ * 以前フォルダ名付きで保存した名前が DB にあれば（A店の分だけ直して上げ直した場合など）、今回は同名が無くても同じ名前で保存して置き換える。
+ * フォルダ名で見分けられないときは（2）（3）…を付ける。それ以外は従来どおりの名前。
+ * @param {Set<string>} existingNames その月に保存済みのファイル名
  */
-function assignSaveNames(files) {
+function assignSaveNames(files, existingNames = new Set()) {
   const count = new Map();
   files.forEach(f => count.set(f.name, (count.get(f.name) || 0) + 1));
-  const used = new Set(files.filter(f => count.get(f.name) === 1).map(f => f.name));
+  const labeled = f => {
+    const label = folderLabelOf(f);
+    return count.get(f.name) > 1 || (label && existingNames.has(`${f.name}（${label}）`));
+  };
+  const used = new Set(files.filter(f => !labeled(f)).map(f => f.name));
   const result = new Map();
   for (const f of files) {
-    if (count.get(f.name) === 1) { result.set(f, f.name); continue; }
-    const dirs = (f.path || '').split('/').slice(0, -1).filter(Boolean);
-    const label = dirs.length ? dirs[dirs.length - 1].slice(0, 60) : '';
+    if (!labeled(f)) { result.set(f, f.name); continue; }
+    const label = folderLabelOf(f);
     let name = label ? `${f.name}（${label}）` : f.name;
     for (let n = 2; used.has(name); n++) name = `${f.name}（${label ? label + '・' : ''}${n}）`;
     used.add(name);
@@ -353,7 +364,13 @@ function handleFiles(newFiles, folderName) {
   newFiles.forEach(file => {
     const path = filePathOf(file);
     // 同じファイルの追加し直しはスキップ。別のフォルダにある同名・同サイズのファイルは別物として残す
-    if (state.files.some(f => f.name === file.name && f.size === file.size && (f.path || '') === path)) return;
+    // （フォルダが分からない方がある＝ファイル単体で追加した場合は、従来どおり名前とサイズだけで同じとみなす）
+    const dir = path.split('/').slice(0, -1).join('/');
+    if (state.files.some(f => {
+      if (f.name !== file.name || f.size !== file.size) return false;
+      const fdir = (f.path || '').split('/').slice(0, -1).join('/');
+      return !dir || !fdir || dir === fdir;
+    })) return;
     state.files.push({ file, name: file.name, path, size: file.size, status: 'loading', wb: null, rows: [] });
   });
 
@@ -388,7 +405,7 @@ function renderFileList() {
 
   els.filesList.innerHTML = state.files.map((f, i) => `
     <div class="file-item ${f.status}">
-      <span class="file-name" title="${escHtml(f.path || f.name)}">${escHtml(f.name)}${f.path && state.files.some(o => o !== f && o.name === f.name) ? `<small>（${escHtml(f.path.split('/').slice(-2, -1)[0] || '')}）</small>` : ''}</span>
+      <span class="file-name" title="${escHtml(f.path || f.name)}">${escHtml(f.name)}${folderLabelOf(f) && state.files.some(o => o !== f && o.name === f.name) ? `<small>（${escHtml(folderLabelOf(f))}）</small>` : ''}</span>
       <span class="file-size">${(f.size/1024).toFixed(1)}KB</span>
       <span class="file-status">${f.status === 'ready' ? '✓ OK' : f.status === 'loading' ? '...' : '✗ ERR'}</span>
     </div>
@@ -635,14 +652,18 @@ async function saveAllFilesToDb() {
 
   // 書き込みの前にログインが生きているかを軽く確かめる。切れていればここで再ログインへ進み、
   // 「ファイルの登録だけ済んで行が入らない」中途半端な保存を作らない（行の保存中に切れる場合を減らす）。
-  await getMonthFilenames('0000-00');
+  // あわせて、今回の月に保存済みのファイル名を読む（フォルダ名付きで保存した分の置き換えに使う）
+  const existingNames = new Set();
+  const saveMonths = [...new Set(readyFiles.map(f => extractMonth(f.name)).filter(Boolean))];
+  if (saveMonths.length === 0) await getMonthFilenames('0000-00');
+  for (const month of saveMonths) (await getMonthFilenames(month)).forEach(n => existingNames.add(n));
 
-  const saveNames = assignSaveNames(readyFiles);
+  const saveNames = assignSaveNames(readyFiles, existingNames);
   for (const f of readyFiles) {
-    if (saveNames.get(f) !== f.name) sysLog(`同じ名前のファイルが複数あるため「${saveNames.get(f)}」として保存します`, 'warn');
+    if (saveNames.get(f) !== f.name) sysLog(`同じ名前のファイルを見分けるため「${saveNames.get(f)}」として保存します`, 'warn');
   }
   if (readyFiles.some(f => saveNames.get(f) !== f.name)) {
-    toast('同じ名前のファイルが複数あったので、フォルダ名を付けて別々に保存します（ログ参照）', 'warn');
+    toast('同じ名前のファイルを見分けるため、フォルダ名を付けて保存します（ログ参照）', 'warn');
   }
 
   sysLog(`DB保存開始: ${readyFiles.length}ファイル`, 'ok');
@@ -666,6 +687,20 @@ async function saveAllFilesToDb() {
       failed.push(saveNames.get(f));
     }
   }
+  // 同名のファイルをフォルダ名付きで全部保存できたら、以前フォルダ名なしで保存した同名の分は古いので消す
+  // （以前は後から保存した 1 つしか残らなかった分。残すと同じ行が二重に数えられる）
+  const clashNames = [...new Set(readyFiles.filter(f => saveNames.get(f) !== f.name).map(f => f.name))];
+  for (const name of clashNames) {
+    const group = readyFiles.filter(f => f.name === name);
+    if (!existingNames.has(name) || group.some(f => saveNames.get(f) === name || failed.includes(saveNames.get(f)))) continue;
+    try {
+      await apiFetch(`/api/files?filename=${encodeURIComponent(name)}`, { method: 'DELETE' });
+      sysLog(`以前フォルダ名なしで保存した「${name}」を、フォルダ名付きの保存に置き換えました`, 'ok');
+    } catch (err) {
+      sysLog(`以前の「${name}」の削除に失敗: ${err.message}`, 'warn');
+    }
+  }
+
   if (failed.length === 0) {
     sysLog(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'ok');
     toast(`DB保存完了: ${saved}/${readyFiles.length}ファイル`, 'success');
