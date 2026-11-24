@@ -252,6 +252,7 @@ async function handleDrop(dataTransfer) {
         await collectFromDirectory(entry, excelFiles);
       } else if (entry.isFile && /\.(xlsx|xls)$/i.test(entry.name)) {
         const file = await getFileFromEntry(entry);
+        file._relPath = entry.fullPath || '';
         excelFiles.push(file);
       }
     }
@@ -284,7 +285,9 @@ async function collectFromDirectory(dirEntry, files) {
         await collectFromDirectory(entry, files);
       } else if (entry.isFile && /\.(xlsx|xls)$/i.test(entry.name)) {
         try {
-          files.push(await getFileFromEntry(entry));
+          const file = await getFileFromEntry(entry);
+          file._relPath = entry.fullPath || ''; // 「フォルダ/サブフォルダ/ファイル名」。同名ファイルの見分けに使う
+          files.push(file);
         } catch (err) {
           sysLog(`READ ERROR: ${entry.name} — ${err && err.message ? err.message : err}`, 'error');
           toast(`${entry.name} を読み込めませんでした`, 'error');
@@ -292,6 +295,35 @@ async function collectFromDirectory(dirEntry, files) {
       }
     }
   }
+}
+
+/** ドロップ・フォルダ選択で分かる、フォルダからの位置（分からなければ空） */
+function filePathOf(file) {
+  return String(file._relPath || file.webkitRelativePath || '').replace(/^\/+/, '');
+}
+
+/**
+ * 保存用のファイル名を決める。
+ * DB では「同じファイル名＝前回分の置き換え」として古い方を消すため、別のフォルダにある同名ファイルを
+ * そのまま保存すると、後から保存した方が先の方を消してしまう。同名が複数あるときだけ、
+ * 入っているフォルダ名を後ろに付けて別のファイルとして保存する（例: 媒体管理表2026.4.xlsx（A店））。
+ * フォルダ名で見分けられないときは（2）（3）…を付ける。同名が無いファイルは従来どおりの名前。
+ */
+function assignSaveNames(files) {
+  const count = new Map();
+  files.forEach(f => count.set(f.name, (count.get(f.name) || 0) + 1));
+  const used = new Set(files.filter(f => count.get(f.name) === 1).map(f => f.name));
+  const result = new Map();
+  for (const f of files) {
+    if (count.get(f.name) === 1) { result.set(f, f.name); continue; }
+    const dirs = (f.path || '').split('/').slice(0, -1).filter(Boolean);
+    const label = dirs.length ? dirs[dirs.length - 1].slice(0, 60) : '';
+    let name = label ? `${f.name}（${label}）` : f.name;
+    for (let n = 2; used.has(name); n++) name = `${f.name}（${label ? label + '・' : ''}${n}）`;
+    used.add(name);
+    result.set(f, name);
+  }
+  return result;
 }
 
 /**
@@ -319,8 +351,10 @@ function handleFiles(newFiles, folderName) {
   }
 
   newFiles.forEach(file => {
-    if (state.files.some(f => f.name === file.name && f.size === file.size)) return; // 重複スキップ
-    state.files.push({ file, name: file.name, size: file.size, status: 'loading', wb: null, rows: [] });
+    const path = filePathOf(file);
+    // 同じファイルの追加し直しはスキップ。別のフォルダにある同名・同サイズのファイルは別物として残す
+    if (state.files.some(f => f.name === file.name && f.size === file.size && (f.path || '') === path)) return;
+    state.files.push({ file, name: file.name, path, size: file.size, status: 'loading', wb: null, rows: [] });
   });
 
   renderFileList();
@@ -354,7 +388,7 @@ function renderFileList() {
 
   els.filesList.innerHTML = state.files.map((f, i) => `
     <div class="file-item ${f.status}">
-      <span class="file-name">${escHtml(f.name)}</span>
+      <span class="file-name" title="${escHtml(f.path || f.name)}">${escHtml(f.name)}${f.path && state.files.some(o => o !== f && o.name === f.name) ? `<small>（${escHtml(f.path.split('/').slice(-2, -1)[0] || '')}）</small>` : ''}</span>
       <span class="file-size">${(f.size/1024).toFixed(1)}KB</span>
       <span class="file-status">${f.status === 'ready' ? '✓ OK' : f.status === 'loading' ? '...' : '✗ ERR'}</span>
     </div>
@@ -603,6 +637,14 @@ async function saveAllFilesToDb() {
   // 「ファイルの登録だけ済んで行が入らない」中途半端な保存を作らない（行の保存中に切れる場合を減らす）。
   await getMonthFilenames('0000-00');
 
+  const saveNames = assignSaveNames(readyFiles);
+  for (const f of readyFiles) {
+    if (saveNames.get(f) !== f.name) sysLog(`同じ名前のファイルが複数あるため「${saveNames.get(f)}」として保存します`, 'warn');
+  }
+  if (readyFiles.some(f => saveNames.get(f) !== f.name)) {
+    toast('同じ名前のファイルが複数あったので、フォルダ名を付けて別々に保存します（ログ参照）', 'warn');
+  }
+
   sysLog(`DB保存開始: ${readyFiles.length}ファイル`, 'ok');
   let saved = 0;
   const failed = [];
@@ -616,12 +658,12 @@ async function saveAllFilesToDb() {
         const [y, m] = fileMonth.split('-');
         perFileFolder = `媒体管理表${y}.${parseInt(m, 10)}`;
       }
-      const result = await saveFileToDb(f.name, perFileFolder, f.rows);
+      const result = await saveFileToDb(saveNames.get(f), perFileFolder, f.rows);
       saved++;
-      sysLog(`  ${f.name} → ${result.row_count}行 (month: ${result.month})`, 'ok');
+      sysLog(`  ${saveNames.get(f)} → ${result.row_count}行 (month: ${result.month})`, 'ok');
     } catch (err) {
-      sysLog(`  ${f.name} 保存失敗: ${err.message}`, 'error');
-      failed.push(f.name);
+      sysLog(`  ${saveNames.get(f)} 保存失敗: ${err.message}`, 'error');
+      failed.push(saveNames.get(f));
     }
   }
   if (failed.length === 0) {
@@ -633,7 +675,7 @@ async function saveAllFilesToDb() {
   }
 
   // 同じ月に、今回アップロードしていない古いファイルが残っていないか確認（ファイル名を変えた場合など）
-  const uploadedNames = new Set(readyFiles.map(f => f.name));  // 失敗分も「今回のファイル」として扱う
+  const uploadedNames = new Set(readyFiles.map(f => saveNames.get(f)));  // 失敗分も「今回のファイル」として扱う
   const months = [...new Set(readyFiles.map(f => extractMonth(f.name)).filter(Boolean))];
   for (const month of months) {
     try {
